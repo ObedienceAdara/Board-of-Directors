@@ -1,0 +1,12 @@
+langchain
+langchain-openai
+langchain-community
+langchain-tavily
+langgraph
+langsmith
+langserve[all]
+fastapi
+uvicorn
+python-dotenv
+reportlab
+requests
