@@ -72,14 +72,79 @@ parser = StrOutputParser()
 # HELPERS
 # ══════════════════════════════════════════════════════════════
 
+# Max characters allowed per brief field
+_FIELD_MAX_LENGTHS = {
+    "idea":               500,
+    "target_market":      300,
+    "budget":             100,
+    "founder_background": 300,
+    "timeline":           100,
+    "constraints":        300,
+}
+
+# Patterns that are common prompt injection attempts
+_INJECTION_PATTERNS = [
+    "ignore previous instructions",
+    "ignore all instructions",
+    "you are now",
+    "new instructions",
+    "system:",
+    "assistant:",
+    "user:",
+    "human:",
+    "disregard",
+    "forget everything",
+    "jailbreak",
+]
+
+
+def sanitize_field(value: str, max_len: int) -> str:
+    """
+    Sanitize a single brief field:
+    - Enforce max length
+    - Collapse newlines/tabs to a single space (prevents prompt structure breaking)
+    - Strip HTML/XML-like angle brackets
+    - Block known prompt injection phrases (case-insensitive)
+    """
+    if not isinstance(value, str):
+        value = str(value)
+
+    # Truncate first
+    value = value[:max_len]
+
+    # Collapse whitespace control characters to a space
+    value = value.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+
+    # Strip angle brackets used in XML/HTML injection
+    value = value.replace("<", "").replace(">", "")
+
+    # Block injection phrases
+    lower = value.lower()
+    for pattern in _INJECTION_PATTERNS:
+        if pattern in lower:
+            raise ValueError(f"Brief field contains disallowed content: '{pattern}'")
+
+    return value.strip()
+
+
+def sanitize_brief(brief: dict) -> dict:
+    """Sanitize all fields in the business brief."""
+    sanitized = {}
+    for field, max_len in _FIELD_MAX_LENGTHS.items():
+        raw = brief.get(field, "")
+        sanitized[field] = sanitize_field(raw, max_len)
+    return sanitized
+
+
 def brief_to_str(brief: dict) -> str:
+    safe = sanitize_brief(brief)
     return (
-        f"Idea: {brief.get('idea', '')}\n"
-        f"Target Market: {brief.get('target_market', '')}\n"
-        f"Budget: {brief.get('budget', '')}\n"
-        f"Founder Background: {brief.get('founder_background', '')}\n"
-        f"Timeline: {brief.get('timeline', '')}\n"
-        f"Constraints: {brief.get('constraints', '')}"
+        f"Idea: {safe.get('idea', '')}\n"
+        f"Target Market: {safe.get('target_market', '')}\n"
+        f"Budget: {safe.get('budget', '')}\n"
+        f"Founder Background: {safe.get('founder_background', '')}\n"
+        f"Timeline: {safe.get('timeline', '')}\n"
+        f"Constraints: {safe.get('constraints', '')}"
     )
 
 
