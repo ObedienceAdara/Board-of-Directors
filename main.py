@@ -316,15 +316,60 @@ def run_board_meeting(brief: dict) -> dict:
 # LANGSERVE — REST API
 # ══════════════════════════════════════════════════════════════
 
-from fastapi               import FastAPI
+import time
+from collections import defaultdict
+from fastapi               import FastAPI, Request
+from fastapi.responses     import JSONResponse
 from langserve             import add_routes
 from langchain_core.runnables import RunnableLambda
+
+# ── Auth + rate limit config ─────────────────────────────────
+_API_SECRET_KEY    = os.getenv("API_SECRET_KEY", "")
+_RATE_LIMIT        = int(os.getenv("RATE_LIMIT_PER_MINUTE", "10"))
+_EXEMPT_PATHS      = {"/", "/docs", "/openapi.json", "/redoc"}
+
+# In-memory rate limit store: { ip: [timestamp, ...] }
+_request_log: dict = defaultdict(list)
+
 
 app = FastAPI(
     title="Plex Hedge — Board of Directors AI",
     description="Multi-agent AI board: CEO, CFO, CTO, CMO, Sales, COO, PM, Researcher",
     version="2.0.0"
 )
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    # Skip auth + rate limiting for non-sensitive paths
+    if request.url.path in _EXEMPT_PATHS:
+        return await call_next(request)
+
+    # ── API Key check ────────────────────────────────────────
+    if _API_SECRET_KEY:
+        incoming_key = request.headers.get("X-API-Key", "")
+        if incoming_key != _API_SECRET_KEY:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid or missing API key."}
+            )
+
+    # ── Rate limiting ────────────────────────────────────────
+    client_ip  = request.client.host if request.client else "unknown"
+    now        = time.time()
+    window     = now - 60  # 1-minute sliding window
+
+    # Purge timestamps outside the window
+    _request_log[client_ip] = [t for t in _request_log[client_ip] if t > window]
+
+    if len(_request_log[client_ip]) >= _RATE_LIMIT:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": f"Rate limit exceeded. Max {_RATE_LIMIT} requests per minute."}
+        )
+
+    _request_log[client_ip].append(now)
+    return await call_next(request)
 
 board_runnable = RunnableLambda(
     lambda inputs: run_board_meeting(inputs["brief"])
@@ -355,7 +400,7 @@ if __name__ == "__main__":
         print("\n🌐 Starting Board of Directors API...")
         print("   Playground → http://localhost:8000/board-meeting/playground")
         print("   Docs       → http://localhost:8000/docs")
-        uvicorn.run(app, host="0.0.0.0", port=8000)
+        uvicorn.run(app, host="127.0.0.1", port=8000)
 
     else:
         # Demo run
