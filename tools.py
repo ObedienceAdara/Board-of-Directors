@@ -157,9 +157,143 @@ from reportlab.lib.styles    import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units     import cm
 from reportlab.lib           import colors
 from reportlab.platypus      import (
-    SimpleDocTemplate, Paragraph, Spacer, PageBreak, HRFlowable
+    SimpleDocTemplate, Paragraph, Spacer, PageBreak, HRFlowable, Table, TableStyle
 )
 from reportlab.lib.enums     import TA_CENTER
+
+
+def markdown_to_flowables(text: str, body_style, heading_style) -> list:
+    """
+    Convert markdown text to a list of ReportLab flowables.
+    Handles: **bold**, # headings, * and - bullet lists, numbered lists, plain paragraphs.
+    """
+    import re
+    flowables = []
+
+    def render_inline(line: str) -> str:
+        """Convert inline markdown (**bold**, *italic*) to ReportLab XML tags."""
+        # Escape XML special chars first (except we handle & already)
+        line = line.replace("&", "&amp;")
+        # Bold: **text** or __text__
+        line = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', line)
+        line = re.sub(r'__(.+?)__',     r'<b>\1</b>', line)
+        # Italic: *text* or _text_ (single, not double)
+        line = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', line)
+        line = re.sub(r'(?<!_)_(?!_)(.+?)(?<!_)_(?!_)',       r'<i>\1</i>', line)
+        return line
+
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip()
+
+        # Skip empty lines
+        if not line.strip():
+            flowables.append(Spacer(1, 0.2 * cm))
+            i += 1
+            continue
+
+        # Headings: ### ## #
+        heading_match = re.match(r'^(#{1,3})\s+(.*)', line)
+        if heading_match:
+            flowables.append(Paragraph(render_inline(heading_match.group(2)), heading_style))
+            i += 1
+            continue
+
+        # Numbered section headings like "1. Executive Summary" or "**1. Title**"
+        numbered_heading = re.match(r'^\*{0,2}(\d+)\.\s+([A-Z][^*\n]{3,})\*{0,2}$', line)
+        if numbered_heading:
+            label = f"{numbered_heading.group(1)}. {numbered_heading.group(2)}"
+            flowables.append(Spacer(1, 0.15 * cm))
+            flowables.append(Paragraph(f"<b>{label}</b>", body_style))
+            i += 1
+            continue
+
+        # Bullet points: * or - or •
+        bullet_match = re.match(r'^[\*\-•]\s+(.*)', line)
+        if bullet_match:
+            bullet_style = ParagraphStyle(
+                "Bullet", parent=body_style,
+                leftIndent=16, bulletIndent=6,
+                spaceAfter=4
+            )
+            flowables.append(Paragraph(f"• {render_inline(bullet_match.group(1))}", bullet_style))
+            i += 1
+            continue
+
+        # Numbered list items: "1. item"
+        num_match = re.match(r'^(\d+)\.\s+(.*)', line)
+        if num_match:
+            bullet_style = ParagraphStyle(
+                "Numbered", parent=body_style,
+                leftIndent=16, spaceAfter=4
+            )
+            flowables.append(Paragraph(
+                f"{num_match.group(1)}. {render_inline(num_match.group(2))}",
+                bullet_style
+            ))
+            i += 1
+            continue
+
+        # Markdown table — collect all consecutive | lines
+        if line.startswith("|"):
+            table_lines = []
+            while i < len(lines) and lines[i].rstrip().startswith("|"):
+                table_lines.append(lines[i].rstrip())
+                i += 1
+
+            # Parse rows, skip separator rows (---|---)
+            rows = []
+            for tl in table_lines:
+                # Separator row
+                if re.match(r'^\|[\s\-\|:]+\|$', tl):
+                    continue
+                cells = [c.strip() for c in tl.strip("|").split("|")]
+                rows.append(cells)
+
+            if rows:
+                # Normalize all rows to same column count
+                col_count = max(len(r) for r in rows)
+                for r in rows:
+                    while len(r) < col_count:
+                        r.append("")
+
+                # Build cell content with inline markdown rendered
+                table_data = [
+                    [Paragraph(render_inline(cell), body_style) for cell in row]
+                    for row in rows
+                ]
+
+                col_width = (A4[0] - 4 * cm) / col_count
+                tbl = Table(table_data, colWidths=[col_width] * col_count, repeatRows=1)
+                tbl.setStyle(TableStyle([
+                    # Header row
+                    ("BACKGROUND",   (0, 0), (-1, 0),  colors.HexColor("#1a1a2e")),
+                    ("TEXTCOLOR",    (0, 0), (-1, 0),  colors.white),
+                    ("FONTNAME",     (0, 0), (-1, 0),  "Helvetica-Bold"),
+                    ("FONTSIZE",     (0, 0), (-1, 0),  9),
+                    # Body rows
+                    ("FONTNAME",     (0, 1), (-1, -1), "Helvetica"),
+                    ("FONTSIZE",     (0, 1), (-1, -1), 9),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#f5f5f5"), colors.white]),
+                    # Grid
+                    ("GRID",         (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
+                    ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
+                    ("TOPPADDING",   (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING",(0, 0), (-1, -1), 5),
+                    ("LEFTPADDING",  (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ]))
+                flowables.append(Spacer(1, 0.2 * cm))
+                flowables.append(tbl)
+                flowables.append(Spacer(1, 0.3 * cm))
+            continue
+
+        # Plain paragraph
+        flowables.append(Paragraph(render_inline(line), body_style))
+        i += 1
+
+    return flowables
 
 
 def generate_pdf(board_data: dict, output_path: str = "board_report.pdf") -> str:
@@ -222,8 +356,9 @@ def generate_pdf(board_data: dict, output_path: str = "board_report.pdf") -> str
     story.append(Paragraph("Executive Summary", section_style))
     story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cccccc")))
     story.append(Spacer(1, 0.3*cm))
-    summary = board_data.get("executive_summary", "").replace("\n", "<br/>")
-    story.append(Paragraph(summary, body_style))
+    story.extend(markdown_to_flowables(
+        board_data.get("executive_summary", ""), body_style, section_style
+    ))
     story.append(PageBreak())
 
     # Department Sections
@@ -231,12 +366,9 @@ def generate_pdf(board_data: dict, output_path: str = "board_report.pdf") -> str
         story.append(Paragraph(section["title"], section_style))
         story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cccccc")))
         story.append(Spacer(1, 0.3*cm))
-        content = (section["content"]
-                   .replace("&", "&amp;")
-                   .replace("<", "&lt;")
-                   .replace(">", "&gt;")
-                   .replace("\n", "<br/>"))
-        story.append(Paragraph(content, body_style))
+        story.extend(markdown_to_flowables(
+            section["content"], body_style, section_style
+        ))
         story.append(PageBreak())
 
     # Revision Log
