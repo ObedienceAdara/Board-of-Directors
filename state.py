@@ -45,5 +45,4 @@ class BoardState(TypedDict):
     pdf_path:             str
 
     # ── Flow control ───────────────────────────────────────
-    current_phase:        str
     needs_revision:       list
