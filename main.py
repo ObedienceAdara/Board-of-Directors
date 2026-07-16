@@ -2,7 +2,8 @@
 ============================================================
  Board of Directors AI System — v2
  Stack:  LangChain + LangGraph + LangSmith + LangServe
- LLM:    OpenRouter (configurable per agent via env vars)
+ LLM:    Groq (llama-3.3-70b-versatile default; configurable per
+         agent via env vars — see console.groq.com/docs/models)
  Output: Notion Board + PDF
 
  Install:
@@ -104,9 +105,6 @@ def node_output(state: BoardState) -> BoardState:
     idea_title  = brief.get("idea", "Business Idea")[:60]
     board_title = f"Board Report — {idea_title} — {datetime.now().strftime('%Y-%m-%d')}"
 
-    # ── Notion ──────────────────────────────────────────────
-    notion_board_id = create_notion_board(board_title)
-
     sections = [
         ("📋 Business Brief",          json.dumps(brief, indent=2)),
         ("🔬 Research Report",          state.get("research_report",   "")),
@@ -119,14 +117,20 @@ def node_output(state: BoardState) -> BoardState:
         ("👑 CEO Board Recommendation", state.get("final_board_report","")),
     ]
 
-    if notion_board_id:
-        for title, content in sections:
-            create_notion_page(notion_board_id, title, content)
-
-    notion_url = (
-        f"https://notion.so/{notion_board_id.replace('-', '')}"
-        if notion_board_id else ""
-    )
+    # ── Notion ──────────────────────────────────────────────
+    # All 8 department reports already exist in `state` at this point —
+    # they're the valuable output. A Notion or PDF failure here should
+    # never throw away analysis a customer is paying for, so both are
+    # isolated in their own try/except instead of crashing node_output.
+    notion_url = ""
+    try:
+        notion_board_id = create_notion_board(board_title)
+        if notion_board_id:
+            for title, content in sections:
+                create_notion_page(notion_board_id, title, content)
+            notion_url = f"https://notion.so/{notion_board_id.replace('-', '')}"
+    except Exception as e:
+        print(f"   ⚠️  Notion output failed, continuing without it: {e}")
 
     # ── PDF ─────────────────────────────────────────────────
     revision_log = [
@@ -139,22 +143,30 @@ def node_output(state: BoardState) -> BoardState:
         for title, content in sections[1:]  # Skip brief — cover page handles it
     ]
 
-    pdf_filename = f"board_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-
-    generate_pdf({
-        "idea":              idea_title,
-        "date":              datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "executive_summary": state.get("final_board_report", "")[:3000],
-        "sections":          pdf_sections,
-        "revision_log":      revision_log
-    }, pdf_filename)
+    pdf_filename = ""
+    try:
+        pdf_filename = f"board_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        generate_pdf({
+            "idea":              idea_title,
+            "date":              datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "executive_summary": state.get("final_board_report", "")[:3000],
+            "sections":          pdf_sections,
+            "revision_log":      revision_log
+        }, pdf_filename)
+    except Exception as e:
+        print(f"   ⚠️  PDF generation failed: {e}")
+        pdf_filename = ""
 
     print(f"\n{'='*60}")
     print("🏁 BOARD MEETING COMPLETE")
     print(f"{'='*60}")
     if notion_url:
         print(f"📋 Notion → {notion_url}")
-    print(f"📄 PDF    → {pdf_filename}")
+    if pdf_filename:
+        print(f"📄 PDF    → {pdf_filename}")
+    if not notion_url and not pdf_filename:
+        print("⚠️  Both Notion and PDF output failed — see errors above. "
+              "All department reports are still available in the returned state.")
 
     return {**state, "notion_board_url": notion_url, "pdf_path": pdf_filename}
 
@@ -298,7 +310,6 @@ def run_board_meeting(brief: dict) -> dict:
         revision_counts={},
         notion_board_url="",
         pdf_path="",
-        current_phase="phase1",
         needs_revision=[]
     )
 
