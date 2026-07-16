@@ -4,6 +4,18 @@ A multi-agent AI system that simulates a full executive board analyzing any busi
 
 ---
 
+## Changelog — v2.1 hardening pass
+
+- **Fixed:** live web search results were injected into prompts with no sanitization (brief fields were sanitized, search results weren't). Now redacted for injection phrases and wrapped in an explicit untrusted-data frame.
+- **Fixed:** the CEO's ALIGNMENT criterion had no other department's output to check against during evaluation. Now receives a summary of everything completed so far.
+- **Fixed:** no retry or fallback on any LLM call — a single failed API call mid-run crashed the entire board meeting. All LLM calls now retry and degrade to a labeled fallback instead of crashing.
+- **Fixed:** Notion/PDF generation failures could discard already-completed department reports. Now isolated so a delivery failure doesn't lose the analysis.
+- **Fixed:** stale OpenRouter/Gemini references in comments and `.env.example` from an earlier version — the system runs on Groq only.
+- **Removed:** unused `current_phase` state field (set once, never read).
+- **Added:** pinned dependency versions, basic test coverage for the sanitization/retry logic.
+
+---
+
 ## Agents
 
 | Agent | Role |
@@ -139,13 +151,14 @@ RESEARCHER_MODEL=llama-3.3-70b-versatile
 ## Project Structure
 
 ```
-├── main.py          # LangGraph pipeline, FastAPI server, entry point
-├── agents.py        # All 8 agent functions + input sanitization
-├── prompts.py       # All agent system prompts
-├── state.py         # Shared BoardState TypedDict
-├── tools.py         # Tavily search, Notion API, PDF generation
-├── requirements.txt # Dependencies
-└── .env.example     # Environment variable template
+├── main.py           # LangGraph pipeline, FastAPI server, entry point
+├── agents.py         # All 8 agent functions + sanitization + retry logic
+├── prompts.py        # All agent system prompts
+├── state.py          # Shared BoardState TypedDict
+├── tools.py          # Tavily search, Notion API, PDF generation
+├── tests/            # Unit tests (sanitization, framing, retry logic)
+├── requirements.txt  # Pinned dependencies
+└── .env.example      # Environment variable template
 ```
 
 ---
@@ -153,6 +166,22 @@ RESEARCHER_MODEL=llama-3.3-70b-versatile
 ## Security
 
 - All brief fields are sanitized before being injected into prompts (length limits, injection pattern blocking)
+- **Live web search results are sanitized too** — injection phrases are redacted and every search result is wrapped in an explicit "untrusted data" frame before it reaches an agent's prompt, so a compromised or adversarial webpage can't hijack the pipeline. Previously only brief fields were sanitized; search results were injected raw.
 - REST API protected by `X-API-Key` header authentication
 - Per-IP rate limiting on all API endpoints
 - Server binds to `127.0.0.1` by default (localhost only)
+
+## Reliability
+
+- Every LLM call goes through a retry wrapper (`safe_invoke`) that retries transient failures and degrades to a clearly-labeled fallback message instead of crashing the run. A single flaky API call mid-run no longer loses the entire board meeting.
+- Notion and PDF output generation are isolated in their own try/except blocks — if either fails, the department reports already computed are still returned instead of being discarded.
+- The CEO's ALIGNMENT criterion now receives a summary of every other department's completed output, so it has something real to check cross-department consistency against (previously it only ever saw the brief and the single output being evaluated).
+
+## Testing
+
+```bash
+pip install -r requirements.txt
+pytest tests/ -v
+```
+
+Tests cover the sanitization, framing, and retry logic with no API keys required (dummy env values are set automatically). They don't cover live LLM/search/Notion calls — those need real credentials to exercise.
