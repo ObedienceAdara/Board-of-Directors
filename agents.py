@@ -245,10 +245,7 @@ def get_task(state: BoardState, agent_key: str) -> str:
 
 
 def get_feedback(state: BoardState, agent_name: str) -> str:
-    evals = state.get("evaluations", {})
-    if agent_name in evals:
-        return evals[agent_name].get("feedback", "")
-    return ""
+    return state.get(f"{agent_name}_feedback", "")
 
 
 # ── Alignment fix ────────────────────────────────────────────────
@@ -345,14 +342,7 @@ def ceo_assign_tasks(state: BoardState) -> BoardState:
         chain, {"brief": brief_to_str(state["brief"])},
         fallback=_TASK_ASSIGNMENT_FALLBACK
     )
-
-    return {
-        **state,
-        "ceo_task_assignments": clean_json(result),
-        "evaluations":          {},
-        "revision_counts":      {},
-        "needs_revision":       []
-    }
+    return {"ceo_task_assignments": clean_json(result)}
 
 
 def ceo_evaluate_agent(
@@ -366,8 +356,8 @@ def ceo_evaluate_agent(
     prompt = ChatPromptTemplate.from_template(CEO_EVALUATE_PROMPT)
     chain  = prompt | llm | parser
 
-    output          = state.get(output_key, "")
-    other_context   = other_departments_context(state, agent_name)
+    output        = state.get(output_key, "")
+    other_context = other_departments_context(state, agent_name)
     result = safe_invoke(chain, {
         "agent_role":        agent_role,
         "brief":             brief_to_str(state["brief"]),
@@ -383,36 +373,31 @@ def ceo_evaluate_agent(
     passed   = eval_obj.get("passed", True)
     feedback = eval_obj.get("feedback", "")
 
-    # Hard cap: accept after 3 revisions
-    revision_counts = dict(state.get("revision_counts", {}))
-    current_count   = revision_counts.get(agent_name, 0)
+    # Hard cap: accept after 3 revisions. Reading this agent's own
+    # dedicated revision key is always safe under parallel execution —
+    # only this agent's own node function ever writes to it.
+    current_count = state.get(f"{agent_name}_revisions", 0)
     if current_count >= 3:
         passed   = True
         feedback = ""
         print(f"   ⚠️  Max revisions hit for {agent_role}. Accepting.")
 
-    evaluations = dict(state.get("evaluations", {}))
-    evaluations[agent_name] = {
-        "passed":     passed,
-        "feedback":   feedback,
-        "iterations": current_count
-    }
-
-    needs_revision = list(state.get("needs_revision", []))
-    if not passed:
-        if agent_name not in needs_revision:
-            needs_revision.append(agent_name)
-        print(f"   ❌ Needs revision: {feedback[:120]}...")
-    else:
-        if agent_name in needs_revision:
-            needs_revision.remove(agent_name)
+    if passed:
         print(f"   ✅ Approved.")
+    else:
+        print(f"   ❌ Needs revision: {feedback[:120]}...")
 
+    # Partial return — ONLY this agent's own two keys. This matters under
+    # parallel execution: siblings evaluate concurrently, and a `{**state,
+    # ...}` spread here would re-write every key in state on every branch,
+    # including the ones a sibling is independently carrying forward
+    # unchanged in the same step. LangGraph sees that as two conflicting
+    # writes to the same channel and raises InvalidUpdateError — confirmed
+    # by reproducing it directly before this fix. Returning only the keys
+    # this function actually changes avoids the collision entirely.
     return {
-        **state,
-        "evaluations":     evaluations,
-        "revision_counts": revision_counts,
-        "needs_revision":  needs_revision
+        f"{agent_name}_passed":   passed,
+        f"{agent_name}_feedback": feedback,
     }
 
 
@@ -437,7 +422,7 @@ def ceo_assemble_report(state: BoardState) -> BoardState:
         "valid — please re-run the board meeting to generate the CEO summary."
     ))
 
-    return {**state, "final_board_report": report}
+    return {"final_board_report": report}
 
 
 # ══════════════════════════════════════════════════════════════
@@ -463,9 +448,10 @@ def researcher_agent(state: BoardState) -> BoardState:
         "search_results": frame_untrusted(search_results[:6000])
     }, fallback="⚠️ Research report could not be generated due to a temporary AI service error. Please re-run the board meeting.")
 
-    rc = dict(state.get("revision_counts", {}))
-    rc["researcher"] = rc.get("researcher", 0) + 1
-    return {**state, "research_report": output, "revision_counts": rc}
+    return {
+        "research_report":     output,
+        "researcher_revisions": state.get("researcher_revisions", 0) + 1
+    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -492,9 +478,10 @@ def cfo_agent(state: BoardState) -> BoardState:
         "search_results":  frame_untrusted(search_results[:4000])
     }, fallback="⚠️ Financial plan could not be generated due to a temporary AI service error. Please re-run the board meeting.")
 
-    rc = dict(state.get("revision_counts", {}))
-    rc["cfo"] = rc.get("cfo", 0) + 1
-    return {**state, "financial_plan": output, "revision_counts": rc}
+    return {
+        "financial_plan": output,
+        "cfo_revisions":   state.get("cfo_revisions", 0) + 1
+    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -521,9 +508,10 @@ def cto_agent(state: BoardState) -> BoardState:
         "search_results":  frame_untrusted(search_results[:4000])
     }, fallback="⚠️ Technical architecture could not be generated due to a temporary AI service error. Please re-run the board meeting.")
 
-    rc = dict(state.get("revision_counts", {}))
-    rc["cto"] = rc.get("cto", 0) + 1
-    return {**state, "tech_plan": output, "revision_counts": rc}
+    return {
+        "tech_plan":    output,
+        "cto_revisions": state.get("cto_revisions", 0) + 1
+    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -551,9 +539,10 @@ def cmo_agent(state: BoardState) -> BoardState:
         "search_results":  frame_untrusted(search_results[:4000])
     }, fallback="⚠️ Go-to-market strategy could not be generated due to a temporary AI service error. Please re-run the board meeting.")
 
-    rc = dict(state.get("revision_counts", {}))
-    rc["cmo"] = rc.get("cmo", 0) + 1
-    return {**state, "marketing_plan": output, "revision_counts": rc}
+    return {
+        "marketing_plan": output,
+        "cmo_revisions":   state.get("cmo_revisions", 0) + 1
+    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -582,9 +571,10 @@ def sales_agent(state: BoardState) -> BoardState:
         "search_results":  frame_untrusted(search_results[:4000])
     }, fallback="⚠️ Sales strategy could not be generated due to a temporary AI service error. Please re-run the board meeting.")
 
-    rc = dict(state.get("revision_counts", {}))
-    rc["head_of_sales"] = rc.get("head_of_sales", 0) + 1
-    return {**state, "sales_strategy": output, "revision_counts": rc}
+    return {
+        "sales_strategy":         output,
+        "head_of_sales_revisions": state.get("head_of_sales_revisions", 0) + 1
+    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -612,9 +602,10 @@ def coo_agent(state: BoardState) -> BoardState:
         "search_results": frame_untrusted(search_results[:4000])
     }, fallback="⚠️ Operations plan could not be generated due to a temporary AI service error. Please re-run the board meeting.")
 
-    rc = dict(state.get("revision_counts", {}))
-    rc["coo"] = rc.get("coo", 0) + 1
-    return {**state, "operations_plan": output, "revision_counts": rc}
+    return {
+        "operations_plan": output,
+        "coo_revisions":    state.get("coo_revisions", 0) + 1
+    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -638,6 +629,7 @@ def pm_agent(state: BoardState) -> BoardState:
         "feedback":        get_feedback(state, "pm")
     }, fallback="⚠️ Product roadmap could not be generated due to a temporary AI service error. Please re-run the board meeting.")
 
-    rc = dict(state.get("revision_counts", {}))
-    rc["pm"] = rc.get("pm", 0) + 1
-    return {**state, "product_roadmap": output, "revision_counts": rc}
+    return {
+        "product_roadmap": output,
+        "pm_revisions":     state.get("pm_revisions", 0) + 1
+    }

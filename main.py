@@ -45,7 +45,7 @@ load_dotenv()
 
 from langgraph.graph import StateGraph, END
 
-from state  import BoardState
+from state  import BoardState, EVALUATED_AGENTS
 from agents import (
     ceo_assign_tasks,
     ceo_evaluate_agent,
@@ -133,9 +133,12 @@ def node_output(state: BoardState) -> BoardState:
         print(f"   ⚠️  Notion output failed, continuing without it: {e}")
 
     # ── PDF ─────────────────────────────────────────────────
+    # Revision counts now live at flattened per-agent keys (e.g.
+    # "cfo_revisions") rather than one shared dict — rebuild the log
+    # LangGraph's join-safe schema requires from those individual keys.
     revision_log = [
-        {"agent": agent, "revisions": count}
-        for agent, count in state.get("revision_counts", {}).items()
+        {"agent": agent, "revisions": state.get(f"{agent}_revisions", 0)}
+        for agent in EVALUATED_AGENTS
     ]
 
     pdf_sections = [
@@ -168,24 +171,74 @@ def node_output(state: BoardState) -> BoardState:
         print("⚠️  Both Notion and PDF output failed — see errors above. "
               "All department reports are still available in the returned state.")
 
-    return {**state, "notion_board_url": notion_url, "pdf_path": pdf_filename}
+    return {"notion_board_url": notion_url, "pdf_path": pdf_filename}
 
 
 # ══════════════════════════════════════════════════════════════
-# CONDITIONAL ROUTERS
+# CONDITIONAL ROUTERS — tiered fan-out with gate barriers
 # ══════════════════════════════════════════════════════════════
+#
+# Real dependencies between agents (from what each prompt actually reads):
+#   Researcher <- brief only
+#   CFO, CTO   <- Researcher
+#   CMO, COO   <- CFO (CMO), CFO + CTO (COO)
+#   Sales, PM  <- CMO + CFO (Sales), CMO + CTO (PM)
+#
+# That collapses into 4 tiers, each gated on the tier before it finishing:
+#   Tier 1: Researcher (solo)
+#   Tier 2: CFO ∥ CTO
+#   Tier 3: CMO ∥ COO
+#   Tier 4: Sales ∥ PM
+#
+# Each pair runs through a "gate" node — both branches unconditionally
+# route there after every evaluation, and the gate's router inspects
+# state to decide: retry whichever agent(s) haven't passed yet (as a
+# variable-length list), or advance once both have. This was chosen
+# over trying to make LangGraph's edge-based fan-in act as a barrier
+# directly, which was tested and found to fire on every individual
+# arrival rather than waiting for all siblings — the gate pattern was
+# verified correct against asymmetric, independently-looping branches
+# before being wired in here.
 
-def _failed(state, name): 
-    evals = state.get("evaluations", {})
-    return name in evals and not evals[name]["passed"]
+def _passed(state: BoardState, agent: str) -> bool:
+    return bool(state.get(f"{agent}_passed", False))
 
-def route_researcher(state): return "researcher"    if _failed(state, "researcher")    else "cfo"
-def route_cfo(state):        return "cfo"           if _failed(state, "cfo")           else "cto"
-def route_cto(state):        return "cto"           if _failed(state, "cto")           else "cmo"
-def route_cmo(state):        return "cmo"           if _failed(state, "cmo")           else "coo"
-def route_coo(state):        return "coo"           if _failed(state, "coo")           else "sales"
-def route_sales(state):      return "sales"         if _failed(state, "head_of_sales") else "pm"
-def route_pm(state):         return "pm"            if _failed(state, "pm")            else "assemble"
+
+def route_researcher(state: BoardState):
+    if not _passed(state, "researcher"):
+        return ["researcher"]
+    return ["cfo", "cto"]           # fan out to Tier 2
+
+
+def route_gate_tier2(state: BoardState):
+    done = {a: _passed(state, a) for a in ("cfo", "cto")}
+    if all(done.values()):
+        return ["cmo", "coo"]       # fan out to Tier 3
+    return [a for a, ok in done.items() if not ok]
+
+
+def route_gate_tier3(state: BoardState):
+    done = {a: _passed(state, a) for a in ("cmo", "coo")}
+    if all(done.values()):
+        return ["sales", "pm"]      # fan out to Tier 4
+    return [a for a, ok in done.items() if not ok]
+
+
+def route_gate_tier4(state: BoardState):
+    done = {
+        "sales": _passed(state, "head_of_sales"),
+        "pm":    _passed(state, "pm"),
+    }
+    if all(done.values()):
+        return ["ceo_assemble"]
+    return [a for a, ok in done.items() if not ok]
+
+
+def node_gate(state: BoardState) -> BoardState:
+    """Pure barrier node — both branches in a tier route here after every
+    evaluation; it makes no state changes itself, it only exists so the
+    router functions above have a single shared point to fire from."""
+    return {}
 
 
 # ══════════════════════════════════════════════════════════════
@@ -196,71 +249,70 @@ def build_board_graph():
     g = StateGraph(BoardState)
 
     # Register all nodes
-    g.add_node("ceo_assign",     node_ceo_assign)
-    g.add_node("researcher",     node_researcher)
-    g.add_node("eval_researcher",node_eval_researcher)
-    g.add_node("cfo",            node_cfo)
-    g.add_node("eval_cfo",       node_eval_cfo)
-    g.add_node("cto",            node_cto)
-    g.add_node("eval_cto",       node_eval_cto)
-    g.add_node("cmo",            node_cmo)
-    g.add_node("eval_cmo",       node_eval_cmo)
-    g.add_node("coo",            node_coo)
-    g.add_node("eval_coo",       node_eval_coo)
-    g.add_node("sales",          node_sales)
-    g.add_node("eval_sales",     node_eval_sales)
-    g.add_node("pm",             node_pm)
-    g.add_node("eval_pm",        node_eval_pm)
-    g.add_node("ceo_assemble",   node_ceo_assemble)
-    g.add_node("output",         node_output)
+    g.add_node("ceo_assign",      node_ceo_assign)
+    g.add_node("researcher",      node_researcher)
+    g.add_node("eval_researcher", node_eval_researcher)
+
+    g.add_node("cfo",             node_cfo)
+    g.add_node("eval_cfo",        node_eval_cfo)
+    g.add_node("cto",             node_cto)
+    g.add_node("eval_cto",        node_eval_cto)
+    g.add_node("gate_tier2",      node_gate)
+
+    g.add_node("cmo",             node_cmo)
+    g.add_node("eval_cmo",        node_eval_cmo)
+    g.add_node("coo",             node_coo)
+    g.add_node("eval_coo",        node_eval_coo)
+    g.add_node("gate_tier3",      node_gate)
+
+    g.add_node("sales",           node_sales)
+    g.add_node("eval_sales",      node_eval_sales)
+    g.add_node("pm",              node_pm)
+    g.add_node("eval_pm",         node_eval_pm)
+    g.add_node("gate_tier4",      node_gate)
+
+    g.add_node("ceo_assemble",    node_ceo_assemble)
+    g.add_node("output",          node_output)
 
     # Entry point
     g.set_entry_point("ceo_assign")
-
-    # ── Phase 1: Researcher ──────────────────────────────────
     g.add_edge("ceo_assign", "researcher")
+
+    # ── Tier 1: Researcher (solo) ────────────────────────────
     g.add_edge("researcher", "eval_researcher")
     g.add_conditional_edges(
         "eval_researcher", route_researcher,
-        {"researcher": "researcher", "cfo": "cfo"}
+        {"researcher": "researcher", "cfo": "cfo", "cto": "cto"}
     )
 
-    # ── Phase 2: CFO → CTO → CMO ────────────────────────────
+    # ── Tier 2: CFO ∥ CTO ─────────────────────────────────────
     g.add_edge("cfo", "eval_cfo")
-    g.add_conditional_edges(
-        "eval_cfo", route_cfo,
-        {"cfo": "cfo", "cto": "cto"}
-    )
-
+    g.add_edge("eval_cfo", "gate_tier2")
     g.add_edge("cto", "eval_cto")
+    g.add_edge("eval_cto", "gate_tier2")
     g.add_conditional_edges(
-        "eval_cto", route_cto,
-        {"cto": "cto", "cmo": "cmo"}
+        "gate_tier2", route_gate_tier2,
+        {"cfo": "cfo", "cto": "cto", "cmo": "cmo", "coo": "coo"}
     )
 
+    # ── Tier 3: CMO ∥ COO ─────────────────────────────────────
     g.add_edge("cmo", "eval_cmo")
-    g.add_conditional_edges(
-        "eval_cmo", route_cmo,
-        {"cmo": "cmo", "coo": "coo"}
-    )
-
-    # ── Phase 3: COO → Sales → PM ───────────────────────────
+    g.add_edge("eval_cmo", "gate_tier3")
     g.add_edge("coo", "eval_coo")
+    g.add_edge("eval_coo", "gate_tier3")
     g.add_conditional_edges(
-        "eval_coo", route_coo,
-        {"coo": "coo", "sales": "sales"}
+        "gate_tier3", route_gate_tier3,
+        {"cmo": "cmo", "coo": "coo", "sales": "sales", "pm": "pm"}
     )
 
+    # ── Tier 4: Sales ∥ PM ────────────────────────────────────
     g.add_edge("sales", "eval_sales")
-    g.add_conditional_edges(
-        "eval_sales", route_sales,
-        {"sales": "sales", "pm": "pm"}
-    )
-
+    g.add_edge("eval_sales", "gate_tier4")
     g.add_edge("pm", "eval_pm")
+    g.add_edge("eval_pm", "gate_tier4")
     g.add_conditional_edges(
-        "eval_pm", route_pm,
-        {"pm": "pm", "assemble": "ceo_assemble"}
+        "gate_tier4", route_gate_tier4,
+        {"sales": "sales", "pm": "pm", "ceo_assemble": "ceo_assemble"}
     )
 
     # ── Final ────────────────────────────────────────────────
@@ -306,11 +358,15 @@ def run_board_meeting(brief: dict) -> dict:
         product_roadmap="",
         ceo_task_assignments="",
         final_board_report="",
-        evaluations={},
-        revision_counts={},
+        researcher_revisions=0,    researcher_passed=False,    researcher_feedback="",
+        cfo_revisions=0,           cfo_passed=False,           cfo_feedback="",
+        cto_revisions=0,           cto_passed=False,           cto_feedback="",
+        cmo_revisions=0,           cmo_passed=False,           cmo_feedback="",
+        coo_revisions=0,           coo_passed=False,           coo_feedback="",
+        head_of_sales_revisions=0, head_of_sales_passed=False, head_of_sales_feedback="",
+        pm_revisions=0,            pm_passed=False,            pm_feedback="",
         notion_board_url="",
         pdf_path="",
-        needs_revision=[]
     )
 
     final_state = board_graph.invoke(initial_state)
@@ -319,7 +375,10 @@ def run_board_meeting(brief: dict) -> dict:
         "final_report":     final_state["final_board_report"],
         "notion_board_url": final_state["notion_board_url"],
         "pdf_path":         final_state["pdf_path"],
-        "revision_summary": final_state["revision_counts"]
+        "revision_summary": {
+            agent: final_state.get(f"{agent}_revisions", 0)
+            for agent in EVALUATED_AGENTS
+        }
     }
 
 

@@ -4,15 +4,26 @@ A multi-agent AI system that simulates a full executive board analyzing any busi
 
 ---
 
-## Changelog — v2.1 hardening pass
+## Changelog
 
+### v2.2 — parallel execution
+- **Changed:** department agents now run in parallel tiers instead of one long sequential chain, based on what each agent's prompt actually depends on:
+  - Tier 1: Researcher (solo)
+  - Tier 2: CFO ∥ CTO
+  - Tier 3: CMO ∥ COO
+  - Tier 4: Sales ∥ PM
+- **Fixed (the real reason this needed a state redesign, not just new graph edges):** the old schema had one shared `evaluations` dict and one shared `revision_counts` dict that every agent's eval step read-modified-wrote. Safe under strict sequential execution; breaks silently under parallel execution, since two concurrent branches can read the same snapshot and one's update overwrites the other's with no error. Flattened into one `{agent}_revisions` / `{agent}_passed` / `{agent}_feedback` triplet per agent — each parallel branch now only ever writes keys no sibling touches.
+- **Fixed:** every node function returned `{**state, "key": val}` — a full spread of the entire state, not just the field it changed. Under parallel execution this made every node "write" to every key on every run, including keys it never touched, which LangGraph correctly rejects as a conflicting concurrent write (`InvalidUpdateError`) the moment two siblings run in the same step. All node functions now return only the keys they actually change.
+- **Added:** a "gate" node per parallel tier — both branches in a tier route there after every evaluation; the gate inspects state and either retries whichever agent(s) haven't passed yet, or advances once both have. Verified against LangGraph directly before use: naive multi-source conditional edges into a shared target fire on every individual arrival rather than waiting for all siblings, so the gate + explicit state-check pattern was used instead of relying on edge-based fan-in as a barrier.
+
+### v2.1 — hardening pass
 - **Fixed:** live web search results were injected into prompts with no sanitization (brief fields were sanitized, search results weren't). Now redacted for injection phrases and wrapped in an explicit untrusted-data frame.
 - **Fixed:** the CEO's ALIGNMENT criterion had no other department's output to check against during evaluation. Now receives a summary of everything completed so far.
 - **Fixed:** no retry or fallback on any LLM call — a single failed API call mid-run crashed the entire board meeting. All LLM calls now retry and degrade to a labeled fallback instead of crashing.
 - **Fixed:** Notion/PDF generation failures could discard already-completed department reports. Now isolated so a delivery failure doesn't lose the analysis.
 - **Fixed:** stale OpenRouter/Gemini references in comments and `.env.example` from an earlier version — the system runs on Groq only.
 - **Removed:** unused `current_phase` state field (set once, never read).
-- **Added:** pinned dependency versions, basic test coverage for the sanitization/retry logic.
+- **Added:** pinned dependency versions, test coverage for sanitization/retry logic and the parallel execution path.
 
 ---
 
@@ -35,9 +46,15 @@ A multi-agent AI system that simulates a full executive board analyzing any busi
 
 1. You submit a business brief (idea, market, budget, timeline, constraints)
 2. The CEO reads the brief and assigns a specific task to each department
-3. Each agent runs in sequence, pulling live web research via Tavily
-4. After each agent, the CEO evaluates the output against 4 criteria: specificity, depth, alignment, and actionability
-5. If an output fails, the agent revises it (up to 3 times)
+3. Agents run in 4 dependency-ordered tiers, parallel within each tier:
+   - **Tier 1:** Researcher (needs only the brief)
+   - **Tier 2:** CFO ∥ CTO (both only need Researcher's output)
+   - **Tier 3:** CMO ∥ COO (need CFO/CTO's output)
+   - **Tier 4:** Sales ∥ PM (need CMO's output)
+
+   Each agent pulls live web research via Tavily as it runs.
+4. After each agent, the CEO evaluates the output against 4 criteria: specificity, depth, alignment (checked against every other completed department, not just the brief), and actionability
+5. If an output fails, that agent revises it (up to 3 times) — independently of its sibling in the same tier, which may pass immediately or need its own separate revisions. A tier only advances once every agent in it has passed or hit the cap.
 6. The CEO assembles a final board report with a GO / NO-GO / PIVOT recommendation
 7. Output is saved as a PDF and optionally pushed to a Notion database
 
@@ -151,12 +168,14 @@ RESEARCHER_MODEL=llama-3.3-70b-versatile
 ## Project Structure
 
 ```
-├── main.py           # LangGraph pipeline, FastAPI server, entry point
+├── main.py           # LangGraph pipeline (tiered parallel execution), FastAPI server
 ├── agents.py         # All 8 agent functions + sanitization + retry logic
 ├── prompts.py        # All agent system prompts
-├── state.py          # Shared BoardState TypedDict
+├── state.py          # Shared BoardState TypedDict (flattened per-agent fields)
 ├── tools.py          # Tavily search, Notion API, PDF generation
-├── tests/            # Unit tests (sanitization, framing, retry logic)
+├── tests/
+│   ├── test_sanitization.py   # Sanitization, framing, retry logic
+│   └── test_parallel_e2e.py   # Real end-to-end run with staggered revisions
 ├── requirements.txt  # Pinned dependencies
 └── .env.example      # Environment variable template
 ```
@@ -184,4 +203,7 @@ pip install -r requirements.txt
 pytest tests/ -v
 ```
 
-Tests cover the sanitization, framing, and retry logic with no API keys required (dummy env values are set automatically). They don't cover live LLM/search/Notion calls — those need real credentials to exercise.
+- `test_sanitization.py` — sanitization, untrusted-data framing, and retry/fallback logic. Pure functions, no API keys needed (dummy env values are set automatically).
+- `test_parallel_e2e.py` — runs the real `run_board_meeting()` end to end through the actual compiled graph, with only the LLM/search/Notion/PDF calls mocked. Drives a staggered revision schedule across every agent (e.g. CFO needs 3 passes, CTO needs 1) to verify the tiered parallel structure handles asymmetric branch lengths correctly and every agent's revision count lands exactly where expected.
+
+Neither test suite needs real credentials. They don't cover live LLM output quality, real search results, or actual Notion/PDF delivery — those need real credentials to exercise.
