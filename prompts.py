@@ -14,12 +14,21 @@ A founder has submitted a business idea for a full board analysis.
 Business Brief:
 {brief}
 
+Before any formal work began, every department gave a quick gut-reaction
+to this idea (100-150 words each, not full analysis). Use these to write
+sharper, more targeted task directives — if multiple departments flagged
+the same risk, make sure that department's directive actually addresses
+it instead of producing a generic report:
+
+{panel_reactions}
+
 Your job:
 1. Summarize the core opportunity in 2 sentences.
 2. Write a specific task directive for each department:
    Researcher, CFO, CTO, CMO, Head of Sales, COO, PM
 
-Each directive must be tailored to THIS specific business idea. Not generic.
+Each directive must be tailored to THIS specific business idea AND informed
+by what the panel already flagged. Not generic.
 
 Return ONLY a JSON object — no markdown, no explanation:
 {{
@@ -34,6 +43,24 @@ Return ONLY a JSON object — no markdown, no explanation:
     "pm":            "specific task..."
   }}
 }}
+"""
+
+PANEL_REACTION_PROMPT = """
+You are the {agent_role} on a startup's board. Before any formal work
+begins, give your gut-reaction to this raw business idea from your
+department's specific vantage point.
+
+Business Brief:
+{brief}
+
+In 100-150 words:
+- Does this idea make basic sense from YOUR department's perspective?
+- What's the single biggest risk or red flag you see, if any?
+- What's one thing you'd want to focus on if assigned to formally analyze this?
+
+Be direct and specific to this exact idea — not generic startup advice.
+This is a quick gut-reaction, not a report. No headers, no bullet points,
+just a short paragraph.
 """
 
 CEO_EVALUATE_PROMPT = """
@@ -99,11 +126,23 @@ Operations Plan:
 Product Roadmap:
 {product_roadmap}
 
+Before writing, actively cross-check the reports against each other for
+real contradictions — not just gaps. Look specifically for: numbers that
+don't reconcile (CFO's budget vs. CTO's infrastructure cost vs. COO's
+hiring plan), timelines that conflict (CTO's build estimate vs. CMO's
+launch date vs. Sales' pipeline assumptions), and channels or strategies
+one department relied on that another already ruled out. Every report
+individually passed its own evaluation — that does not guarantee they
+agree with each other, and nothing upstream of this step checks that.
+
 Write a structured final report with these exact sections:
 1. Executive Summary (3-5 sentences)
 2. Key Opportunities (across all departments)
 3. Key Risks (across all departments)
-4. Critical Dependencies (between departments)
+4. Cross-Department Contradictions — specific conflicts found per the
+   check above, with which two departments disagree and on what exactly.
+   If none found after genuinely checking, say so explicitly rather than
+   leaving the section thin.
 5. Board Recommendation: GO / NO-GO / PIVOT — with full justification
 6. Top 5 Immediate Next Actions for the founder
 

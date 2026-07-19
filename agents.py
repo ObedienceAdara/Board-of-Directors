@@ -28,6 +28,7 @@ from prompts import (
     CEO_TASK_ASSIGNMENT_PROMPT,
     CEO_EVALUATE_PROMPT,
     CEO_ASSEMBLE_PROMPT,
+    PANEL_REACTION_PROMPT,
     RESEARCHER_PROMPT,
     CFO_PROMPT,
     CTO_PROMPT,
@@ -333,13 +334,59 @@ _TASK_ASSIGNMENT_FALLBACK = json.dumps({
 })
 
 
+# ── Tier 0: initial panel ────────────────────────────────────────
+# Every department gives a quick gut-reaction to the raw brief before the
+# CEO assigns any formal tasks — catches "this idea doesn't make sense"
+# before four tiers of increasingly detailed work get built on top of it,
+# and gives the CEO's task assignments something real to react to instead
+# of guessing blind.
+_PANEL_AGENTS = {
+    "researcher":    ("Researcher",     RESEARCHER_MODEL),
+    "cfo":           ("CFO",            CFO_MODEL),
+    "cto":           ("CTO",            CTO_MODEL),
+    "cmo":           ("CMO",            CMO_MODEL),
+    "coo":           ("COO",            COO_MODEL),
+    "head_of_sales": ("Head of Sales",  SALES_MODEL),
+    "pm":            ("PM",             PM_MODEL),
+}
+
+
+def panel_reaction(state: BoardState, agent_name: str, agent_role: str, model: str) -> BoardState:
+    print(f"💭 {agent_role} — initial reaction...")
+    llm    = make_llm(model)
+    prompt = ChatPromptTemplate.from_template(PANEL_REACTION_PROMPT)
+    chain  = prompt | llm | parser
+
+    reaction = safe_invoke(chain, {
+        "agent_role": agent_role,
+        "brief":      brief_to_str(state["brief"])
+    }, fallback=f"⚠️ {agent_role}'s initial reaction could not be generated due to a temporary AI service error.")
+
+    return {f"{agent_name}_panel": reaction}
+
+
+def format_panel_reactions(state: BoardState) -> str:
+    """Assemble all 7 panel reactions into one block for the CEO's task
+    assignment prompt. Order matches the department order used everywhere
+    else in the pipeline."""
+    parts = []
+    for key, (label, _model) in _PANEL_AGENTS.items():
+        reaction = state.get(f"{key}_panel", "")
+        if reaction:
+            parts.append(f"{label}: {reaction}")
+    return "\n\n".join(parts) if parts else "No panel reactions available."
+
+
 def ceo_assign_tasks(state: BoardState) -> BoardState:
     print("\n👑 CEO — Assigning tasks to all departments...")
     llm    = make_llm(CEO_MODEL)
     prompt = ChatPromptTemplate.from_template(CEO_TASK_ASSIGNMENT_PROMPT)
     chain  = prompt | llm | parser
     result = safe_invoke(
-        chain, {"brief": brief_to_str(state["brief"])},
+        chain, {
+            "brief":           brief_to_str(state["brief"]),
+            "panel_reactions": format_panel_reactions(state)[:4000]
+        },
         fallback=_TASK_ASSIGNMENT_FALLBACK
     )
     return {"ceo_task_assignments": clean_json(result)}

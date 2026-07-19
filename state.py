@@ -42,6 +42,19 @@ class BoardState(TypedDict):
     # ── Input ──────────────────────────────────────────────
     brief:                dict
 
+    # ── Tier 0: initial panel reactions ─────────────────────
+    # Quick gut-reactions from every department to the raw brief, before
+    # the CEO assigns any formal tasks. Flattened per agent for the same
+    # reason as everything below — each panelist only ever writes its
+    # own key, so the 7-way parallel fan-out has nothing to collide on.
+    researcher_panel:            str
+    cfo_panel:                    str
+    cto_panel:                     str
+    cmo_panel:                      str
+    coo_panel:                       str
+    head_of_sales_panel:              str
+    pm_panel:                          str
+
     # ── Department outputs ─────────────────────────────────
     research_report:      str
     financial_plan:        str

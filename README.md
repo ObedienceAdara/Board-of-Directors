@@ -6,6 +6,11 @@ A multi-agent AI system that simulates a full executive board analyzing any busi
 
 ## Changelog
 
+### v2.3 — initial panel + contradiction-hunting
+- **Added:** Tier 0 — before the CEO assigns any formal tasks, all 7 departments give a quick gut-reaction (100-150 words, one parallel LLM call each) to the raw brief: does this make sense from their angle, what's the biggest red flag, what would they focus on. The CEO's task-assignment prompt now receives these reactions and is instructed to write sharper, more targeted directives when multiple departments flag the same risk — instead of assigning generic tasks blind. Runs as a genuine 7-way parallel fan-out/fan-in (verified as a distinct pattern from the tiered gates before implementation — a one-shot fan-in with no retry loop behaves differently from the tier gates and was tested separately).
+- **Strengthened:** the final assembly prompt now explicitly instructs the CEO to cross-check every department's report against the others for real contradictions (budget vs. infrastructure cost vs. hiring plan, conflicting timelines, a channel one department relied on that another already ruled out) — not just list gaps. The report's 4th section is now "Cross-Department Contradictions" instead of the softer "Critical Dependencies," and the CEO must say explicitly if it checked and found nothing, rather than leaving the section thin by omission.
+- **Not done, deliberately:** bidirectional revision loops (agents revising each other's work after the fact) were considered and explicitly not built — it breaks the forward-only invariant the parallel gate pattern depends on, and needs real cascade/staleness tracking to do safely. Deferred until there's confirmed customer signal it's worth the risk.
+
 ### v2.2 — parallel execution
 - **Changed:** department agents now run in parallel tiers instead of one long sequential chain, based on what each agent's prompt actually depends on:
   - Tier 1: Researcher (solo)
@@ -45,18 +50,19 @@ A multi-agent AI system that simulates a full executive board analyzing any busi
 ## How It Works
 
 1. You submit a business brief (idea, market, budget, timeline, constraints)
-2. The CEO reads the brief and assigns a specific task to each department
-3. Agents run in 4 dependency-ordered tiers, parallel within each tier:
+2. **Tier 0:** all 7 departments give a quick gut-reaction to the raw brief in parallel — does it make sense from their angle, biggest red flag, what they'd focus on
+3. The CEO reads the brief and the panel's reactions, and assigns a specific, panel-informed task directive to each department
+4. Agents run in 4 dependency-ordered tiers, parallel within each tier:
    - **Tier 1:** Researcher (needs only the brief)
    - **Tier 2:** CFO ∥ CTO (both only need Researcher's output)
    - **Tier 3:** CMO ∥ COO (need CFO/CTO's output)
    - **Tier 4:** Sales ∥ PM (need CMO's output)
 
    Each agent pulls live web research via Tavily as it runs.
-4. After each agent, the CEO evaluates the output against 4 criteria: specificity, depth, alignment (checked against every other completed department, not just the brief), and actionability
-5. If an output fails, that agent revises it (up to 3 times) — independently of its sibling in the same tier, which may pass immediately or need its own separate revisions. A tier only advances once every agent in it has passed or hit the cap.
-6. The CEO assembles a final board report with a GO / NO-GO / PIVOT recommendation
-7. Output is saved as a PDF and optionally pushed to a Notion database
+5. After each agent, the CEO evaluates the output against 4 criteria: specificity, depth, alignment (checked against every other completed department, not just the brief), and actionability
+6. If an output fails, that agent revises it (up to 3 times) — independently of its sibling in the same tier, which may pass immediately or need its own separate revisions. A tier only advances once every agent in it has passed or hit the cap.
+7. The CEO assembles a final board report — actively cross-checking every department's numbers and timelines against each other for real contradictions, not just listing gaps — with a GO / NO-GO / PIVOT recommendation
+8. Output is saved as a PDF and optionally pushed to a Notion database
 
 ---
 

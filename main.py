@@ -43,10 +43,11 @@ load_dotenv()
 #   LANGCHAIN_API_KEY=your_key
 #   LANGCHAIN_PROJECT=BoardOfDirectors
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, START, END
 
 from state  import BoardState, EVALUATED_AGENTS
 from agents import (
+    panel_reaction,
     ceo_assign_tasks,
     ceo_evaluate_agent,
     ceo_assemble_report,
@@ -57,6 +58,13 @@ from agents import (
     sales_agent,
     coo_agent,
     pm_agent,
+    RESEARCHER_MODEL,
+    CFO_MODEL,
+    CTO_MODEL,
+    CMO_MODEL,
+    SALES_MODEL,
+    COO_MODEL,
+    PM_MODEL,
 )
 from tools import create_notion_board, create_notion_page, generate_pdf
 
@@ -64,6 +72,28 @@ from tools import create_notion_board, create_notion_page, generate_pdf
 # ══════════════════════════════════════════════════════════════
 # GRAPH NODES
 # ══════════════════════════════════════════════════════════════
+
+def node_panel_researcher(state):
+    return panel_reaction(state, "researcher",    "Researcher",    RESEARCHER_MODEL)
+
+def node_panel_cfo(state):
+    return panel_reaction(state, "cfo",           "CFO",           CFO_MODEL)
+
+def node_panel_cto(state):
+    return panel_reaction(state, "cto",           "CTO",           CTO_MODEL)
+
+def node_panel_cmo(state):
+    return panel_reaction(state, "cmo",           "CMO",           CMO_MODEL)
+
+def node_panel_coo(state):
+    return panel_reaction(state, "coo",           "COO",           COO_MODEL)
+
+def node_panel_sales(state):
+    return panel_reaction(state, "head_of_sales", "Head of Sales", SALES_MODEL)
+
+def node_panel_pm(state):
+    return panel_reaction(state, "pm",            "PM",            PM_MODEL)
+
 
 def node_ceo_assign(state):          return ceo_assign_tasks(state)
 def node_researcher(state):          return researcher_agent(state)
@@ -249,6 +279,14 @@ def build_board_graph():
     g = StateGraph(BoardState)
 
     # Register all nodes
+    g.add_node("panel_researcher",    node_panel_researcher)
+    g.add_node("panel_cfo",           node_panel_cfo)
+    g.add_node("panel_cto",           node_panel_cto)
+    g.add_node("panel_cmo",           node_panel_cmo)
+    g.add_node("panel_coo",           node_panel_coo)
+    g.add_node("panel_sales",         node_panel_sales)
+    g.add_node("panel_pm",            node_panel_pm)
+
     g.add_node("ceo_assign",      node_ceo_assign)
     g.add_node("researcher",      node_researcher)
     g.add_node("eval_researcher", node_eval_researcher)
@@ -274,8 +312,14 @@ def build_board_graph():
     g.add_node("ceo_assemble",    node_ceo_assemble)
     g.add_node("output",          node_output)
 
-    # Entry point
-    g.set_entry_point("ceo_assign")
+    # ── Tier 0: initial panel — 7-way fan-out from start, one-shot
+    #    (no retry loop, so the plain static-edge fan-in barrier that
+    #    verified correctly for this exact shape applies here) ──────
+    for panel_node in ("panel_researcher", "panel_cfo", "panel_cto",
+                        "panel_cmo", "panel_coo", "panel_sales", "panel_pm"):
+        g.add_edge(START, panel_node)
+        g.add_edge(panel_node, "ceo_assign")
+
     g.add_edge("ceo_assign", "researcher")
 
     # ── Tier 1: Researcher (solo) ────────────────────────────
@@ -349,6 +393,8 @@ def run_board_meeting(brief: dict) -> dict:
 
     initial_state = BoardState(
         brief=brief,
+        researcher_panel="", cfo_panel="", cto_panel="", cmo_panel="",
+        coo_panel="", head_of_sales_panel="", pm_panel="",
         research_report="",
         financial_plan="",
         tech_plan="",
