@@ -82,8 +82,37 @@ def _deterministic_consistency(state: BoardState) -> dict[str, Any]:
     return {"formal_snapshot": snapshot, "deterministic_contradictions": snapshot.get("cross_domain_contradictions", [])}
 
 
+def _calculation_lineage(state: BoardState) -> list[dict[str, Any]]:
+    calculations = state.get("phase2_calculations", {})
+    if not isinstance(calculations, dict):
+        return []
+    finance = calculations.get("finance", {})
+    sales = calculations.get("sales", {})
+    operations = calculations.get("operations", {})
+    technical = calculations.get("technical", {})
+    product = calculations.get("product", {})
+    rows: list[dict[str, Any]] = []
+    mappings = [
+        ("finance.12_month_revenue", "finance", "deterministic_financial_v1", finance.get("12_month_revenue"), "sum(finance.months[*].revenue)", ["head_of_sales_formal", "cfo_formal"]),
+        ("finance.gross_margin", "finance", "deterministic_financial_v1", finance.get("gross_margin"), "(revenue-cogs)/revenue", ["head_of_sales_formal", "cfo_formal"]),
+        ("finance.contribution_margin", "finance", "deterministic_financial_v1", finance.get("contribution_margin"), "revenue-cogs-marketing", ["head_of_sales_formal", "cfo_formal", "cmo_formal"]),
+        ("finance.net_burn", "finance", "deterministic_financial_v1", finance.get("net_burn"), "operating_costs-revenue", ["head_of_sales_formal", "cfo_formal", "coo_formal", "cto_formal", "cmo_formal"]),
+        ("finance.runway_months", "finance", "deterministic_financial_v1", finance.get("runway_months"), "starting_cash/average_positive_monthly_burn", ["cfo_formal", "head_of_sales_formal", "coo_formal"]),
+        ("finance.break_even_month", "finance", "deterministic_financial_v1", finance.get("break_even_month"), "first forecast month with net_burn <= 0", ["head_of_sales_formal", "cfo_formal", "coo_formal", "cto_formal", "cmo_formal"]),
+        ("sales.12_month_revenue", "sales", "deterministic_sales_funnel_v1", sales.get("12_month_revenue"), "sum(sales.months[*].revenue)", ["head_of_sales_formal"]),
+        ("sales.required_annual_customers", "sales", "deterministic_sales_funnel_v1", sales.get("required_annual_customers"), "annual_revenue_target/price", ["head_of_sales_formal"]),
+        ("operations.12_month_payroll", "operations", "deterministic_workforce_v1", operations.get("12_month_payroll"), "sum(monthly headcount*annual_salary/12 after hiring date)", ["coo_formal"]),
+        ("technical.delivery_duration_weeks", "technical", "deterministic_delivery_v1", technical.get("delivery_duration_weeks"), "dependency-constrained phase effort/team capacity", ["cto_formal"]),
+        ("product.priority_scores", "product", "deterministic_product_priority_v1", [item.get("priority_score") for item in product.get("features", []) if isinstance(item, dict)], "impact/effort*strategic_weight*dependency_factor", ["pm_formal"]),
+    ]
+    for calculation_id, domain, engine, value, formula, agent_inputs in mappings:
+        rows.append({"calculation_id": calculation_id, "domain": domain, "engine": engine, "value": value, "formula": formula, "agent_inputs": agent_inputs})
+    return rows
+
+
 def _build_provenance(state: BoardState) -> dict[str, Any]:
     ledger = build_provenance_ledger(cast(dict[str, Any], state))
+    ledger["calculation_lineage"] = _calculation_lineage(state)
     validation = validate_provenance_ledger(ledger)
     if not validation.get("valid", False):
         raise ValueError("Provenance integrity validation failed: " + "; ".join(validation.get("errors", [])))
@@ -121,7 +150,7 @@ def _notion_sections(state: BoardState) -> list[tuple[str, str]]:
         ("Phase 2 Input Quality", compact_json(state.get("phase2_input_quality", {}), 8000)),
         ("Formal Consistency Snapshot", compact_json(state.get("formal_snapshot", {}), 18000)),
         ("Contradiction Adjudication", compact_json(state.get("contradiction_adjudication", {}), 12000)),
-        ("Evidence & Provenance Ledger", compact_json(state.get("provenance_ledger", {}), 26000)),
+        ("Evidence & Provenance Ledger", compact_json(state.get("provenance_ledger", {}), 30000)),
         ("Provenance Validation", compact_json(state.get("provenance_validation", {}), 6000)),
         ("Execution & Revision Summary", compact_json({"status": state.get("scheduler_status", {}), "revision_summary": state.get("revision_summary", {})}, 10000)),
         ("CEO Board Recommendation", str(state.get("final_board_report", ""))),
