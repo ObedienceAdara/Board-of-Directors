@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Any, Callable, cast
+from typing import Any, Callable, Mapping, cast
 
 from langgraph.graph import END, START, StateGraph
 
@@ -59,27 +59,27 @@ def run_formal_board(state: BoardState) -> BoardState:
         max_workers=7,
         max_revisions=3,
     )
-    return scheduler.run(state)
+    return cast(BoardState, scheduler.run(cast(dict[str, Any], state)))
 
 
-def _run_stage(state: BoardState, stage: str, fn: Callable[[BoardState], dict[str, Any] | BoardState]) -> BoardState:
+def _run_stage(state: BoardState, stage: str, fn: Callable[[BoardState], Mapping[str, Any]]) -> BoardState:
     try:
-        state.update(fn(state))
+        state.update(dict(fn(state)))
     except Exception as exc:
         state.setdefault("pipeline_errors", []).append({"stage": stage, "message": str(exc)})
     return state
 
 
 def _deterministic_consistency(state: BoardState) -> dict[str, Any]:
-    formal = {agent: state.get(f"{agent}_formal", {}) for agent in AGENT_ORDER}
-    validations = {agent: state.get(f"{agent}_validation", {}) for agent in AGENT_ORDER}
+    formal = {agent: cast(dict[str, Any], state.get(f"{agent}_formal", {})) for agent in AGENT_ORDER}
+    validations = {agent: cast(dict[str, Any], state.get(f"{agent}_validation", {})) for agent in AGENT_ORDER}
     snapshot = consistency_bundle(state["brief"], formal, validations)
     return {"formal_snapshot": snapshot, "deterministic_contradictions": snapshot.get("cross_domain_contradictions", [])}
 
 
 def run_full_pipeline(state: BoardState) -> BoardState:
-    stages = [
-        ("panel", run_panel),
+    stages: list[tuple[str, Callable[[BoardState], Mapping[str, Any]]]] = [
+        ("panel", lambda current: run_panel(current)),
         ("ceo_task_assignment", ceo_assign_tasks),
         ("formal_scheduler", run_formal_board),
         ("deterministic_consistency", _deterministic_consistency),
@@ -126,7 +126,7 @@ def node_output(state: BoardState) -> BoardState:
         state.setdefault("output_errors", []).append({"stage": "notion", "message": str(exc)})
 
     try:
-        report_model = build_executive_report(state)
+        report_model = build_executive_report(cast(dict[str, Any], state))
         filename = f"board_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         generate_pdf(report_model, filename)
         state["pdf_path"] = filename
@@ -152,11 +152,11 @@ board_graph = build_board_graph()
 def run_board_meeting(brief: dict[str, Any]) -> dict[str, Any]:
     try:
         state = board_graph.invoke(initialize_state(brief))
-        runtime = assess_run(state)
+        runtime = assess_run(cast(dict[str, Any], state))
     except Exception as exc:
         state = initialize_state(brief)
         state["pipeline_errors"] = [{"stage": "board_graph", "message": str(exc)}]
-        runtime = assess_run(state)
+        runtime = assess_run(cast(dict[str, Any], state))
     return {
         "status": runtime["status"], "success": runtime["success"],
         "final_report": state.get("final_board_report", ""),
