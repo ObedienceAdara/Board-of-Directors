@@ -5,13 +5,12 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from langgraph.graph import END, START, StateGraph
 
 from agents import ceo_adjudicate_contradictions, ceo_assemble_report, ceo_assign_tasks, ceo_evaluate_agent, panel_reaction, run_department
-from analysis import consistency_bundle
-from analysis import compact_json
+from analysis import compact_json, consistency_bundle
 from models import BoardState
 from orchestration import AGENT_ORDER, DynamicReadinessScheduler
 from reports import build_executive_report
@@ -30,7 +29,7 @@ def run_panel(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def initialize_state(brief: dict[str, Any]) -> BoardState:
-    state: BoardState = {"brief": brief}
+    state: dict[str, Any] = {"brief": brief}
     for agent in AGENT_ORDER:
         state[f"{agent}_panel"] = ""
         state[f"{agent}_formal"] = {}
@@ -51,7 +50,7 @@ def initialize_state(brief: dict[str, Any]) -> BoardState:
         "final_board_report": "", "notion_board_url": "", "pdf_path": "",
         "pipeline_errors": [], "output_errors": [],
     })
-    return state
+    return cast(BoardState, state)
 
 
 def run_formal_board(state: BoardState) -> BoardState:
