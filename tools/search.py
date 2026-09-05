@@ -64,6 +64,7 @@ def search_with_provenance(query: str, max_results: int = 5) -> dict[str, Any]:
     try:
         raw_results = get_search_tool(max_results=max_results).invoke(query)
         items = _result_items(raw_results)
+        request_id = raw_results.get("request_id") if isinstance(raw_results, dict) else None
         records: list[dict[str, Any]] = []
         for rank, item in enumerate(items[:max_results], start=1):
             url = str(item.get("url", "")).strip()
@@ -79,6 +80,8 @@ def search_with_provenance(query: str, max_results: int = 5) -> dict[str, Any]:
                 "provider": "tavily",
                 "score": item.get("score"),
                 "published_at": item.get("published_at"),
+                "request_id": str(request_id).strip() if request_id else None,
+                "content": sanitize_search_content(item.get("content", item.get("snippet", "")))[:1800],
             })
         return {"query": query, "retrieved_at": captured_at, "provider": "tavily", "results": records, "content": sanitize_search_content(parse_search_results(raw_results)), "error": None}
     except Exception as exc:
