@@ -18,10 +18,8 @@ EVALUATED_AGENTS = [
 
 
 class BoardState(TypedDict, total=False):
-    # Input
     brief: dict[str, Any]
 
-    # Tier 0 panel
     researcher_panel: str
     cfo_panel: str
     cto_panel: str
@@ -31,7 +29,6 @@ class BoardState(TypedDict, total=False):
     pm_panel: str
     ceo_task_assignments: str
 
-    # Human-readable department reports
     research_report: str
     financial_plan: str
     tech_plan: str
@@ -40,7 +37,6 @@ class BoardState(TypedDict, total=False):
     sales_strategy: str
     product_roadmap: str
 
-    # Machine-readable formal analyses and deterministic validation results
     researcher_formal: dict[str, Any]
     cfo_formal: dict[str, Any]
     cto_formal: dict[str, Any]
@@ -57,41 +53,64 @@ class BoardState(TypedDict, total=False):
     head_of_sales_validation: dict[str, Any]
     pm_validation: dict[str, Any]
 
-    # Revision tracking
     researcher_revisions: int
     researcher_passed: bool
     researcher_feedback: str
+    researcher_evaluation: dict[str, Any]
+    researcher_execution_error: str
+    researcher_forced_accept: bool
+
     cfo_revisions: int
     cfo_passed: bool
     cfo_feedback: str
+    cfo_evaluation: dict[str, Any]
+    cfo_execution_error: str
+    cfo_forced_accept: bool
+
     cto_revisions: int
     cto_passed: bool
     cto_feedback: str
+    cto_evaluation: dict[str, Any]
+    cto_execution_error: str
+    cto_forced_accept: bool
+
     cmo_revisions: int
     cmo_passed: bool
     cmo_feedback: str
+    cmo_evaluation: dict[str, Any]
+    cmo_execution_error: str
+    cmo_forced_accept: bool
+
     coo_revisions: int
     coo_passed: bool
     coo_feedback: str
+    coo_evaluation: dict[str, Any]
+    coo_execution_error: str
+    coo_forced_accept: bool
+
     head_of_sales_revisions: int
     head_of_sales_passed: bool
     head_of_sales_feedback: str
+    head_of_sales_evaluation: dict[str, Any]
+    head_of_sales_execution_error: str
+    head_of_sales_forced_accept: bool
+
     pm_revisions: int
     pm_passed: bool
     pm_feedback: str
+    pm_evaluation: dict[str, Any]
+    pm_execution_error: str
+    pm_forced_accept: bool
 
-    # Dynamic scheduler observability
     scheduler_status: dict[str, str]
     scheduler_events: list[dict[str, Any]]
     revision_summary: dict[str, int]
 
-    # Formal global consistency stage
     formal_snapshot: dict[str, Any]
     deterministic_contradictions: list[dict[str, Any]]
     contradiction_adjudication: dict[str, Any]
     consistency_status: str
 
-    # Final output
     final_board_report: str
     notion_board_url: str
     pdf_path: str
