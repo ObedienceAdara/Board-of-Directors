@@ -114,3 +114,6 @@ class BoardState(TypedDict, total=False):
     final_board_report: str
     notion_board_url: str
     pdf_path: str
+
+    pipeline_errors: list[dict[str, str]]
+    output_errors: list[dict[str, str]]
