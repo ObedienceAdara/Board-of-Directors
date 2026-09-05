@@ -79,6 +79,26 @@ def _strategic_metrics(state: dict[str, Any]) -> list[tuple[str, str]]:
     return metrics[:12]
 
 
+def _provenance_metrics(state: dict[str, Any]) -> str:
+    summary = state.get("provenance_summary", {}) or {}
+    if not isinstance(summary, dict) or not summary:
+        return "• Provenance ledger not generated."
+    total = summary.get("total_claims", 0)
+    sourced = summary.get("sourced_claims", 0)
+    derived = summary.get("derived_claims", 0)
+    asserted = summary.get("agent_assertions", 0)
+    decisions = summary.get("decision_records", 0)
+    coverage = float(summary.get("evidence_coverage_ratio", 0.0)) * 100
+    return (
+        f"• Claims tracked: {total}\n"
+        f"• Source-backed claims: {sourced}\n"
+        f"• Deterministically derived claims: {derived}\n"
+        f"• Agent assertions without external source linkage: {asserted}\n"
+        f"• Evidence coverage: {coverage:.1f}%\n"
+        f"• Decisions linked to lineage: {decisions}"
+    )
+
+
 def _risk_lines(state: dict[str, Any]) -> str:
     contradictions = state.get("deterministic_contradictions", []) or []
     adjudication = state.get("contradiction_adjudication", {}) or {}
@@ -129,7 +149,7 @@ def build_executive_report(state: dict[str, Any]) -> dict[str, Any]:
         {"title": "Product & MVP", "subtitle": "What should be built first and what should wait", "blocks": [("Product view", _extract(state.get("product_roadmap"), 7, 2500))]},
         {"title": "Risks & Contradictions", "subtitle": "The assumptions most likely to invalidate the plan", "blocks": [("Cross-functional risk register", _risk_lines(state)), ("CEO synthesis", _extract(final_report, 3, 1200))]},
         {"title": "First 90 Days", "subtitle": "Execution sequence derived from the board analysis", "blocks": _first_90_days(state)},
-        {"title": "Assumptions & Evidence", "subtitle": "What is known, inferred and still uncertain", "blocks": [("Source / evidence posture", _extract(state.get("research_report"), 5, 2100)), ("Open questions", _extract(state.get("contradiction_adjudication"), 4, 1500))]},
-        {"title": "Final Board Recommendation", "subtitle": "The decision page", "blocks": [("Recommendation", _extract(final_report, 7, 2600)), ("Non-negotiables", "• Do not treat unsupported assumptions as facts.\n• Resolve material contradictions before committing significant capital.\n• Re-run the board when core pricing, budget, timeline or market assumptions change.")]},
+        {"title": "Assumptions & Evidence", "subtitle": "What is known, inferred and still uncertain", "blocks": [("Provenance integrity", _provenance_metrics(state)), ("Source / evidence posture", _extract(state.get("research_report"), 5, 1900)), ("Open questions", _extract(state.get("contradiction_adjudication"), 4, 1300))]},
+        {"title": "Final Board Recommendation", "subtitle": "The decision page", "blocks": [("Recommendation", _extract(final_report, 7, 2600)), ("Non-negotiables", "• Do not treat unsupported assumptions as facts.\n• Resolve material contradictions before committing significant capital.\n• Re-run the board when core pricing, budget, timeline or market assumptions change.\n• Preserve claim-to-source and claim-to-formula lineage when numbers are changed.")]},
     ]
     return {"idea": idea, "pages": pages}

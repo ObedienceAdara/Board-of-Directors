@@ -10,7 +10,7 @@ from langgraph.graph import END, START, StateGraph
 
 from agents import ceo_adjudicate_contradictions, ceo_assemble_report, ceo_assign_tasks, ceo_evaluate_agent, panel_reaction, run_department
 from analysis import compact_json, consistency_bundle
-from models import BoardState
+from models import BoardState, build_provenance_ledger, validate_provenance_ledger
 from orchestration import AGENT_ORDER, DynamicReadinessScheduler
 from reports import build_executive_report
 from tools import create_notion_board, create_notion_page, generate_pdf
@@ -18,14 +18,10 @@ from utils import assess_run
 
 
 def run_panel(state: BoardState) -> dict[str, Any]:
-    """Seven-way one-shot panel fan-out."""
     panel_state = cast(dict[str, Any], state)
     result: dict[str, Any] = {}
     with ThreadPoolExecutor(max_workers=7, thread_name_prefix="board-panel") as pool:
-        futures = {
-            pool.submit(panel_reaction, panel_state, agent, agent.replace("_", " ").title()): agent
-            for agent in AGENT_ORDER
-        }
+        futures = {pool.submit(panel_reaction, panel_state, agent, agent.replace("_", " ").title()): agent for agent in AGENT_ORDER}
         for future in as_completed(futures):
             result.update(future.result())
     return result
@@ -37,6 +33,7 @@ def initialize_state(brief: dict[str, Any]) -> BoardState:
         state[f"{agent}_panel"] = ""
         state[f"{agent}_formal"] = {}
         state[f"{agent}_validation"] = {}
+        state[f"{agent}_retrieval_trace"] = []
         state[f"{agent}_revisions"] = 0
         state[f"{agent}_passed"] = False
         state[f"{agent}_feedback"] = ""
@@ -44,14 +41,12 @@ def initialize_state(brief: dict[str, Any]) -> BoardState:
         state[f"{agent}_forced_accept"] = False
         state[f"{agent}_evaluation"] = {}
     state.update({
-        "ceo_task_assignments": "",
-        "research_report": "", "financial_plan": "", "tech_plan": "",
+        "ceo_task_assignments": "", "research_report": "", "financial_plan": "", "tech_plan": "",
         "marketing_plan": "", "operations_plan": "", "sales_strategy": "", "product_roadmap": "",
-        "scheduler_status": {}, "scheduler_events": [], "revision_summary": {},
-        "formal_snapshot": {}, "deterministic_contradictions": [],
-        "contradiction_adjudication": {}, "consistency_status": "NOT_RUN",
-        "final_board_report": "", "notion_board_url": "", "pdf_path": "",
-        "pipeline_errors": [], "output_errors": [],
+        "scheduler_status": {}, "scheduler_events": [], "revision_summary": {}, "formal_snapshot": {},
+        "deterministic_contradictions": [], "contradiction_adjudication": {}, "consistency_status": "NOT_RUN",
+        "provenance_ledger": {}, "provenance_validation": {}, "provenance_summary": {},
+        "final_board_report": "", "notion_board_url": "", "pdf_path": "", "pipeline_errors": [], "output_errors": [],
     })
     return cast(BoardState, state)
 
@@ -59,9 +54,7 @@ def initialize_state(brief: dict[str, Any]) -> BoardState:
 def run_formal_board(state: BoardState) -> BoardState:
     scheduler = DynamicReadinessScheduler(
         runner=lambda agent, snapshot: run_department(agent, snapshot),
-        evaluator=lambda agent, snapshot: ceo_evaluate_agent(agent, snapshot),
-        max_workers=7,
-        max_revisions=3,
+        evaluator=lambda agent, snapshot: ceo_evaluate_agent(agent, snapshot), max_workers=7, max_revisions=3,
     )
     return cast(BoardState, scheduler.run(cast(dict[str, Any], state)))
 
@@ -81,14 +74,20 @@ def _deterministic_consistency(state: BoardState) -> dict[str, Any]:
     return {"formal_snapshot": snapshot, "deterministic_contradictions": snapshot.get("cross_domain_contradictions", [])}
 
 
+def _build_provenance(state: BoardState) -> dict[str, Any]:
+    ledger = build_provenance_ledger(cast(dict[str, Any], state))
+    validation = validate_provenance_ledger(ledger)
+    if not validation.get("valid", False):
+        raise ValueError("Provenance integrity validation failed: " + "; ".join(validation.get("errors", [])))
+    return {"provenance_ledger": ledger, "provenance_validation": validation, "provenance_summary": ledger.get("summary", {})}
+
+
 def run_full_pipeline(state: BoardState) -> BoardState:
     stages: list[tuple[str, Callable[[BoardState], Mapping[str, Any]]]] = [
-        ("panel", lambda current: run_panel(current)),
-        ("ceo_task_assignment", ceo_assign_tasks),
-        ("formal_scheduler", run_formal_board),
-        ("deterministic_consistency", _deterministic_consistency),
-        ("contradiction_adjudication", ceo_adjudicate_contradictions),
-        ("ceo_synthesis", ceo_assemble_report),
+        ("panel", lambda current: run_panel(current)), ("ceo_task_assignment", ceo_assign_tasks),
+        ("formal_scheduler", run_formal_board), ("deterministic_consistency", _deterministic_consistency),
+        ("contradiction_adjudication", ceo_adjudicate_contradictions), ("ceo_synthesis", ceo_assemble_report),
+        ("provenance", _build_provenance),
     ]
     for stage, fn in stages:
         state = _run_stage(state, stage, fn)
@@ -109,6 +108,8 @@ def _notion_sections(state: BoardState) -> list[tuple[str, str]]:
         ("Product Roadmap", str(state.get("product_roadmap", ""))),
         ("Formal Consistency Snapshot", compact_json(state.get("formal_snapshot", {}), 18000)),
         ("Contradiction Adjudication", compact_json(state.get("contradiction_adjudication", {}), 12000)),
+        ("Evidence & Provenance Ledger", compact_json(state.get("provenance_ledger", {}), 26000)),
+        ("Provenance Validation", compact_json(state.get("provenance_validation", {}), 6000)),
         ("Execution & Revision Summary", compact_json({"status": state.get("scheduler_status", {}), "revision_summary": state.get("revision_summary", {})}, 10000)),
         ("CEO Board Recommendation", str(state.get("final_board_report", ""))),
     ]
@@ -118,7 +119,6 @@ def node_output(state: BoardState) -> BoardState:
     idea_title = str(state.get("brief", {}).get("idea", "Business Idea"))[:80]
     board_title = f"Board Report — {idea_title} — {datetime.now().strftime('%Y-%m-%d')}"
     sections = _notion_sections(state)
-
     try:
         notion_id = create_notion_board(board_title)
         if notion_id:
@@ -128,7 +128,6 @@ def node_output(state: BoardState) -> BoardState:
             state.setdefault("output_errors", []).append({"stage": "notion", "message": "Notion credentials/configuration unavailable."})
     except Exception as exc:
         state.setdefault("output_errors", []).append({"stage": "notion", "message": str(exc)})
-
     try:
         report_model = build_executive_report(cast(dict[str, Any], state))
         filename = f"board_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
@@ -140,7 +139,6 @@ def node_output(state: BoardState) -> BoardState:
 
 
 def build_board_graph():
-    """Keep LangGraph as the application execution envelope."""
     graph = StateGraph(BoardState)
     graph.add_node("board_pipeline", run_full_pipeline)
     graph.add_node("output", node_output)
@@ -162,14 +160,12 @@ def run_board_meeting(brief: dict[str, Any]) -> dict[str, Any]:
         state["pipeline_errors"] = [{"stage": "board_graph", "message": str(exc)}]
         runtime = assess_run(cast(dict[str, Any], state))
     return {
-        "status": runtime["status"], "success": runtime["success"],
-        "final_report": state.get("final_board_report", ""),
+        "status": runtime["status"], "success": runtime["success"], "final_report": state.get("final_board_report", ""),
         "notion_board_url": state.get("notion_board_url", ""), "pdf_path": state.get("pdf_path", ""),
-        "revision_summary": state.get("revision_summary", {}),
-        "consistency_status": state.get("consistency_status", "NOT_RUN"),
-        "deterministic_contradictions": state.get("deterministic_contradictions", []),
-        "contradiction_adjudication": state.get("contradiction_adjudication", {}),
-        "formal_snapshot": state.get("formal_snapshot", {}),
+        "revision_summary": state.get("revision_summary", {}), "consistency_status": state.get("consistency_status", "NOT_RUN"),
+        "deterministic_contradictions": state.get("deterministic_contradictions", []), "contradiction_adjudication": state.get("contradiction_adjudication", {}),
+        "formal_snapshot": state.get("formal_snapshot", {}), "provenance_ledger": state.get("provenance_ledger", {}),
+        "provenance_validation": state.get("provenance_validation", {}), "provenance_summary": state.get("provenance_summary", {}),
         "scheduler_status": state.get("scheduler_status", {}), "scheduler_events": state.get("scheduler_events", []),
         "errors": runtime["errors"], "warnings": runtime["warnings"],
     }

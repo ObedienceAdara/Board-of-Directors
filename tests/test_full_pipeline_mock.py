@@ -84,3 +84,6 @@ def test_run_board_meeting_mocked_full_pipeline(monkeypatch, tmp_path):
     assert result["notion_board_url"] == "https://notion.so/mockboardid"
     assert Path(result["pdf_path"]).exists()
     assert result["errors"] == []
+    assert result["provenance_validation"]["valid"] is True
+    assert result["provenance_ledger"]["schema_version"] == "1.0"
+    assert any(item["decision_id"] == "board.recommendation" for item in result["provenance_ledger"]["decisions"])

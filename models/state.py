@@ -55,6 +55,14 @@ class BoardState(TypedDict, total=False):
     head_of_sales_validation: dict[str, Any]
     pm_validation: dict[str, Any]
 
+    researcher_retrieval_trace: list[dict[str, Any]]
+    cfo_retrieval_trace: list[dict[str, Any]]
+    cto_retrieval_trace: list[dict[str, Any]]
+    cmo_retrieval_trace: list[dict[str, Any]]
+    coo_retrieval_trace: list[dict[str, Any]]
+    head_of_sales_retrieval_trace: list[dict[str, Any]]
+    pm_retrieval_trace: list[dict[str, Any]]
+
     researcher_revisions: int
     researcher_passed: bool
     researcher_feedback: str
@@ -105,6 +113,9 @@ class BoardState(TypedDict, total=False):
     deterministic_contradictions: list[dict[str, Any]]
     contradiction_adjudication: dict[str, Any]
     consistency_status: str
+    provenance_ledger: dict[str, Any]
+    provenance_validation: dict[str, Any]
+    provenance_summary: dict[str, Any]
     final_board_report: str
     notion_board_url: str
     pdf_path: str

@@ -1,6 +1,6 @@
 # Board of Directors AI
 
-A dependency-aware multi-agent business-analysis system that simulates an executive board while separating **LLM judgment** from **deterministic business validation**.
+A dependency-aware multi-agent business-analysis system that simulates an executive board while separating **LLM judgment** from **deterministic business validation and evidence provenance**.
 
 ## v3 Architecture
 
@@ -13,6 +13,7 @@ Business Brief
   -> deterministic global consistency pass
   -> LLM contradiction adjudication
   -> CEO final synthesis
+  -> evidence/provenance ledger
   -> decision-grade report model
   -> PDF / Notion
 ```
@@ -31,10 +32,12 @@ agents/
 analysis/
   formal.py                     # formal-analysis interface
   consistency.py                # cross-domain consistency interface
+  provenance.py                 # evidence/lineage interface
 orchestration/
   scheduler.py                  # dynamic-readiness scheduler interface
 models/
   state.py                      # BoardState + BusinessBrief
+  provenance.py                 # provenance ledger builder + validator
 reports/
   executive.py                  # compact strategic report model
 tools/
@@ -71,6 +74,30 @@ Every department emits a human-readable `report` plus a machine-checkable `analy
 
 Global deterministic consistency checks then test cross-department relationships before LLM adjudication.
 
+## Evidence & Provenance
+
+Phase 1 adds a machine-readable ledger so important decisions can be audited beyond the text of an LLM response:
+
+```text
+claim
+  -> evidence
+  -> source
+  -> retrieval metadata
+  -> transformation / formula
+  -> responsible agent
+  -> decision
+```
+
+Each normalized claim is explicitly classified as:
+
+- `reported`: matched to source-backed evidence.
+- `derived`: produced by a deterministic formula with dependency claim IDs.
+- `agent_assertion`: an analyst/model assertion without external source linkage.
+
+The ledger preserves source URL, title, publisher, evidence excerpt and retrieval metadata when supplied; missing source information is left missing rather than guessed. Component-level lineage is materialized for financial totals, payroll, marketing allocations and technical phase sums. The board recommendation and contradiction adjudications link back to their contributing claim IDs.
+
+`run_board_meeting(...)` exposes `provenance_ledger`, `provenance_validation`, and `provenance_summary`. The executive PDF surfaces bounded provenance-integrity metrics, while the Notion output contains the complete bounded ledger.
+
 ## Executive PDF
 
 The PDF is now an **executive decision document**, not an archive of every department transcript.
@@ -94,7 +121,7 @@ The report layer selectively extracts high-value findings and normalized claims 
 
 ## Outputs
 
-A run returns the final report, formal integrity information, contradiction candidates and adjudication, scheduler status/events, revision counts, PDF path and optional Notion URL.
+A run returns the final report, formal integrity information, contradiction candidates and adjudication, scheduler status/events, revision counts, provenance ledger/validation/coverage, PDF path and optional Notion URL.
 
 ## Setup
 
@@ -119,10 +146,10 @@ API docs: `http://localhost:8000/docs`
 pytest tests/ -v
 ```
 
-The suite covers formal validation, contradiction detection, retry/sanitization behavior, dynamic readiness, API startup/route registration, mocked full-pipeline execution and the fixed PDF page-count contract.
+The suite covers formal validation, contradiction detection, retry/sanitization behavior, dynamic readiness, provenance lineage/integrity, API startup/route registration, mocked full-pipeline execution and the fixed PDF page-count contract.
 
 For a real external integration run, use the credentialed staging workflow in `.github/workflows/staging.yml`.
 
 ## Documentation
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the package responsibilities and report design.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the package responsibilities, provenance chain and report design.
