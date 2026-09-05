@@ -85,6 +85,8 @@ def _deterministic_consistency(state: BoardState) -> dict[str, Any]:
 def _build_provenance(state: BoardState) -> dict[str, Any]:
     ledger = build_provenance_ledger(cast(dict[str, Any], state))
     validation = validate_provenance_ledger(ledger)
+    if not validation.get("valid", False):
+        raise ValueError("Provenance integrity validation failed: " + "; ".join(validation.get("errors", [])))
     return {
         "provenance_ledger": ledger,
         "provenance_validation": validation,
