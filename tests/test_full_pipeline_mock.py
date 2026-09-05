@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import main
+from app import pipeline
 
 
 BRIEF = {
@@ -37,7 +38,7 @@ def test_run_board_meeting_mocked_full_pipeline(monkeypatch, tmp_path):
         for agent, key in reports.items():
             state[key] = f"{agent} report"
             state[f"{agent}_formal"] = {"report": f"{agent} report"}
-            state[f"{agent}_validation"] = {"errors": [], "warnings": []}
+            state[f"{agent}_validation"] = {"errors": [], "warnings": [], "claims": []}
             state[f"{agent}_passed"] = True
             state[f"{agent}_revisions"] = 1
         state["scheduler_status"] = {agent: "passed" for agent in agents}
@@ -46,10 +47,7 @@ def test_run_board_meeting_mocked_full_pipeline(monkeypatch, tmp_path):
         return state
 
     def fake_consistency(_state):
-        return {
-            "formal_snapshot": {"cross_domain_contradictions": []},
-            "deterministic_contradictions": [],
-        }
+        return {"formal_snapshot": {"cross_domain_contradictions": []}, "deterministic_contradictions": []}
 
     def fake_adjudication(_state):
         return {
@@ -60,25 +58,22 @@ def test_run_board_meeting_mocked_full_pipeline(monkeypatch, tmp_path):
     def fake_synthesis(_state):
         return {"final_board_report": "GO — mocked board recommendation."}
 
-    def fake_notion_board(_title):
-        return "mock-board-id"
-
-    def fake_notion_page(_board_id, _title, _content):
-        return "mock-page-id"
-
-    def fake_generate_pdf(_payload, filename):
-        Path(filename).write_bytes(b"%PDF-1.4 mocked report")
+    def fake_output(state):
+        state["notion_board_url"] = "https://notion.so/mockboardid"
+        Path("mock-board-report.pdf").write_bytes(b"%PDF-1.4 mocked report")
+        state["pdf_path"] = "mock-board-report.pdf"
+        return state
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(main, "run_panel", fake_panel)
-    monkeypatch.setattr(main, "ceo_assign_tasks", fake_assign)
-    monkeypatch.setattr(main, "run_formal_board", fake_formal)
-    monkeypatch.setattr(main, "adjudicate_contradictions", fake_consistency)
-    monkeypatch.setattr(main, "ceo_adjudicate_contradictions", fake_adjudication)
-    monkeypatch.setattr(main, "ceo_assemble_report", fake_synthesis)
-    monkeypatch.setattr(main, "create_notion_board", fake_notion_board)
-    monkeypatch.setattr(main, "create_notion_page", fake_notion_page)
-    monkeypatch.setattr(main, "generate_pdf", fake_generate_pdf)
+    monkeypatch.setattr(pipeline, "run_panel", fake_panel)
+    monkeypatch.setattr(pipeline, "ceo_assign_tasks", fake_assign)
+    monkeypatch.setattr(pipeline, "run_formal_board", fake_formal)
+    monkeypatch.setattr(pipeline, "_deterministic_consistency", fake_consistency)
+    monkeypatch.setattr(pipeline, "ceo_adjudicate_contradictions", fake_adjudication)
+    monkeypatch.setattr(pipeline, "ceo_assemble_report", fake_synthesis)
+    monkeypatch.setattr(pipeline, "node_output", fake_output)
+    monkeypatch.setattr(main, "run_board_meeting", pipeline.run_board_meeting)
+    pipeline.board_graph = pipeline.build_board_graph()
 
     result = main.run_board_meeting(BRIEF)
 

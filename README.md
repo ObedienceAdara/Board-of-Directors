@@ -2,15 +2,7 @@
 
 A dependency-aware multi-agent business-analysis system that simulates an executive board while separating **LLM judgment** from **deterministic business validation**.
 
-## v3 Upgrade
-
-The v3 implementation introduces three major architectural changes:
-
-1. **Formal departmental analysis** — every department now emits a human-readable `report` plus a machine-checkable `analysis` object. Domain validators independently check arithmetic and structural invariants.
-2. **Formal global consistency** — deterministic cross-department checks run before an LLM adjudicator. The adjudicator classifies each detected conflict as a true contradiction, acceptable difference, or insufficient evidence and records the resolution.
-3. **Dynamic readiness scheduling** — agents launch when their actual dependencies have passed. There are no fixed global tiers; independent branches can progress at different speeds and revision counts.
-
-## Architecture
+## v3 Architecture
 
 ```text
 Business Brief
@@ -21,10 +13,47 @@ Business Brief
   -> deterministic global consistency pass
   -> LLM contradiction adjudication
   -> CEO final synthesis
+  -> decision-grade report model
   -> PDF / Notion
 ```
 
-### Dependency graph
+The runtime still uses LangGraph as the outer execution envelope. The dynamic scheduler handles dependency-ready departmental work inside that envelope.
+
+## Package Structure
+
+```text
+main.py                         # stable CLI/import entrypoint
+app/
+  api.py                        # FastAPI + LangServe surface
+  pipeline.py                   # application orchestration + delivery
+agents/
+  board.py                      # stable board-agent interface
+analysis/
+  formal.py                     # formal-analysis interface
+  consistency.py                # cross-domain consistency interface
+orchestration/
+  scheduler.py                  # dynamic-readiness scheduler interface
+models/
+  state.py                      # BoardState + BusinessBrief
+reports/
+  executive.py                  # compact strategic report model
+tools/
+  search.py                     # Tavily integration
+  notion.py                     # Notion integration
+  pdf.py                        # ReportLab executive PDF renderer
+utils/
+  runtime.py                    # truthful runtime status
+formal_agents.py                # current v3 agent implementation
+analysis_engine.py              # current deterministic formal engine
+consistency_engine.py           # current deterministic consistency engine
+scheduler.py                    # current scheduler implementation
+prompts.py                      # current prompt library
+tests/
+```
+
+The package boundaries are intentionally explicit before the next deeper architectural phase. Existing root implementations remain compatible while the application imports the new boundaries.
+
+## Department Dependency Graph
 
 | Agent | Dependencies |
 |---|---|
@@ -36,51 +65,36 @@ Business Brief
 | Head of Sales | Researcher, CFO, CMO |
 | PM | Researcher, CTO, CMO |
 
-### Formal contract
+## Formal Analysis
 
-Every department returns:
+Every department emits a human-readable `report` plus a machine-checkable `analysis` object. Validators check domain invariants such as financial arithmetic, TAM/SAM/SOM hierarchy, timeline sanity, marketing-budget reconciliation, payroll derivation and impact/effort prioritization.
 
-```json
-{
-  "report": "human-readable markdown",
-  "analysis": {}
-}
-```
+Global deterministic consistency checks then test cross-department relationships before LLM adjudication.
 
-The report is for people; the analysis object is for software.
+## Executive PDF
 
-### Deterministic checks
+The PDF is now an **executive decision document**, not an archive of every department transcript.
 
-- Research: TAM >= SAM >= SOM and evidence structure.
-- CFO: cost sums, unit-economics arithmetic, non-negative scenarios, break-even validity.
-- CTO: positive phase durations and engineering/infrastructure cost sanity.
-- CMO: channel allocations equal marketing budget.
-- Sales: price/revenue validity and required-customer derivation.
-- COO: payroll derived from headcount x salary.
-- PM: impact/effort validity and deterministic prioritization.
+It is deliberately bounded to **12 pages**:
 
-### Global consistency checks
+1. Cover
+2. Executive Decision Brief
+3. The Opportunity
+4. Financial Case
+5. Technical Feasibility
+6. Go-To-Market
+7. Operating Model
+8. Product & MVP
+9. Risks & Contradictions
+10. First 90 Days
+11. Assumptions & Evidence
+12. Final Board Recommendation
 
-The consistency engine checks relationships individual department validators cannot see:
-
-- CFO operating budget vs CTO infrastructure + COO payroll.
-- CFO base-case revenue vs Sales annual target.
-- CFO marketing budget vs CMO budget.
-- Researcher SOM vs Sales revenue target.
-- CTO MVP timeline vs CMO launch timeline.
-- Founder budget vs CFO startup-cost total.
-
-The resulting contradiction candidates are then adjudicated by the CEO model. Arithmetic validation remains authoritative; the LLM cannot make a failed calculation become mathematically valid.
-
-### Dynamic scheduling
-
-`DynamicReadinessScheduler` uses actual data dependencies and a concurrent executor. When a branch passes, newly-ready agents are dispatched immediately. An agent needing three revisions does not hold an unrelated sibling hostage.
-
-Scheduler events record dispatch, completion, evaluation, retries and forced acceptance.
+The report layer selectively extracts high-value findings and normalized claims from the full state. Full department analysis remains available in the internal state and Notion output.
 
 ## Outputs
 
-A run returns the final report plus formal integrity information, deterministic contradiction candidates, adjudication results, scheduler status/events, revision counts, PDF path and optional Notion URL.
+A run returns the final report, formal integrity information, contradiction candidates and adjudication, scheduler status/events, revision counts, PDF path and optional Notion URL.
 
 ## Setup
 
@@ -105,25 +119,10 @@ API docs: `http://localhost:8000/docs`
 pytest tests/ -v
 ```
 
-Tests cover deterministic validation, contradiction detection, sanitization/retry behavior, independent revisions and dynamic readiness.
+The suite covers formal validation, contradiction detection, retry/sanitization behavior, dynamic readiness, API startup/route registration, mocked full-pipeline execution and the fixed PDF page-count contract.
 
-## Project Structure
+For a real external integration run, use the credentialed staging workflow in `.github/workflows/staging.yml`.
 
-```text
-main.py
-formal_agents.py
-agents.py
-analysis_engine.py
-consistency_engine.py
-scheduler.py
-prompts.py
-tools.py
-state.py
-tests/
-requirements.txt
-.env.example
-```
+## Documentation
 
-## Limitations
-
-Deterministic validation verifies relationships among supplied values; it cannot establish that a sourced number is true. Web evidence still requires source-quality judgment. Global adjudication is recorded rather than automatically propagating backward into upstream reports; selective invalidation/re-analysis is reserved for a future staleness-aware architecture.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the package responsibilities and report design.

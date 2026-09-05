@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 import main
+from app import api as api_module
 
 
 client = TestClient(main.app)
@@ -18,7 +19,7 @@ def test_api_root_starts_cleanly():
 
 def test_board_meeting_route_is_registered(monkeypatch):
     monkeypatch.setattr(
-        main,
+        api_module,
         "run_board_meeting",
         lambda _brief: {
             "status": "success",
