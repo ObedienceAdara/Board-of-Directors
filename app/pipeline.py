@@ -7,18 +7,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Callable
 
+from langgraph.graph import END, START, StateGraph
+
 from agents import ceo_adjudicate_contradictions, ceo_assemble_report, ceo_assign_tasks, ceo_evaluate_agent, panel_reaction, run_department
 from consistency_engine import consistency_bundle
-from models import BoardState, EVALUATED_AGENTS
+from models import BoardState
 from reports import build_executive_report
-from runtime import assess_run
 from scheduler import AGENT_ORDER, DynamicReadinessScheduler
 from tools import create_notion_board, create_notion_page, generate_pdf
-
-try:
-    from fastapi import Request
-except ImportError:  # pragma: no cover
-    Request = Any  # type: ignore[misc,assignment]
+from utils import assess_run
 
 try:
     from analysis_engine import compact_json
@@ -152,17 +149,28 @@ def node_output(state: BoardState) -> BoardState:
     return state
 
 
+def build_board_graph():
+    """Keep LangGraph as the application execution envelope."""
+    graph = StateGraph(BoardState)
+    graph.add_node("board_pipeline", run_full_pipeline)
+    graph.add_node("output", node_output)
+    graph.add_edge(START, "board_pipeline")
+    graph.add_edge("board_pipeline", "output")
+    graph.add_edge("output", END)
+    return graph.compile()
+
+
+board_graph = build_board_graph()
+
+
 def run_board_meeting(brief: dict[str, Any]) -> dict[str, Any]:
     try:
-        state = initialize_state(brief)
-        state = run_full_pipeline(state)
-        if not state.get("pipeline_errors"):
-            state = node_output(state)
+        state = board_graph.invoke(initialize_state(brief))
         runtime = assess_run(state)
     except Exception as exc:
-        runtime = {"status": "failed", "success": False, "errors": [{"stage": "board_graph", "message": str(exc)}], "warnings": []}
         state = initialize_state(brief)
-
+        state["pipeline_errors"] = [{"stage": "board_graph", "message": str(exc)}]
+        runtime = assess_run(state)
     return {
         "status": runtime["status"],
         "success": runtime["success"],
