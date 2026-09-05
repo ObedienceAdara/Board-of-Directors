@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import main
 
 
@@ -13,7 +15,7 @@ BRIEF = {
 }
 
 
-def test_run_board_meeting_mocked_full_pipeline(monkeypatch):
+def test_run_board_meeting_mocked_full_pipeline(monkeypatch, tmp_path):
     agents = ["researcher", "cfo", "cto", "cmo", "coo", "head_of_sales", "pm"]
     reports = {
         "researcher": "research_report",
@@ -58,18 +60,25 @@ def test_run_board_meeting_mocked_full_pipeline(monkeypatch):
     def fake_synthesis(_state):
         return {"final_board_report": "GO — mocked board recommendation."}
 
-    def fake_output(state):
-        state["notion_board_url"] = "https://notion.so/mock"
-        state["pdf_path"] = "mock-report.pdf"
-        return state
+    def fake_notion_board(_title):
+        return "mock-board-id"
 
+    def fake_notion_page(_board_id, _title, _content):
+        return "mock-page-id"
+
+    def fake_generate_pdf(_payload, filename):
+        Path(filename).write_bytes(b"%PDF-1.4 mocked report")
+
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(main, "run_panel", fake_panel)
     monkeypatch.setattr(main, "ceo_assign_tasks", fake_assign)
     monkeypatch.setattr(main, "run_formal_board", fake_formal)
     monkeypatch.setattr(main, "adjudicate_contradictions", fake_consistency)
     monkeypatch.setattr(main, "ceo_adjudicate_contradictions", fake_adjudication)
     monkeypatch.setattr(main, "ceo_assemble_report", fake_synthesis)
-    monkeypatch.setattr(main, "node_output", fake_output)
+    monkeypatch.setattr(main, "create_notion_board", fake_notion_board)
+    monkeypatch.setattr(main, "create_notion_page", fake_notion_page)
+    monkeypatch.setattr(main, "generate_pdf", fake_generate_pdf)
 
     result = main.run_board_meeting(BRIEF)
 
@@ -77,4 +86,6 @@ def test_run_board_meeting_mocked_full_pipeline(monkeypatch):
     assert result["success"] is True
     assert result["final_report"].startswith("GO")
     assert result["scheduler_status"] == {agent: "passed" for agent in agents}
+    assert result["notion_board_url"] == "https://notion.so/mockboardid"
+    assert Path(result["pdf_path"]).exists()
     assert result["errors"] == []
