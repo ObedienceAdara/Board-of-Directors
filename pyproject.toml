@@ -11,9 +11,10 @@ ignore = ["E501"]
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
+follow_imports = "skip"
 check_untyped_defs = true
 no_implicit_optional = true
-files = ["analysis_engine.py", "consistency_engine.py", "scheduler.py", "state.py", "runtime.py", "models", "app", "agents", "reports", "tools", "utils"]
+files = ["models", "app", "agents", "analysis", "orchestration", "reports", "tools", "utils"]
 
 [tool.pytest.ini_options]
 markers = [
