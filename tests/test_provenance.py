@@ -15,6 +15,7 @@ def _state() -> dict:
             "market": {"currency": "USD", "sam": 420000000},
             "evidence": [
                 {
+                    "claim_id": "market.sam",
                     "claim": "serviceable available market is $420M",
                     "value": 420000000,
                     "unit": "USD",
@@ -39,10 +40,7 @@ def _state() -> dict:
         "cfo_formal": {
             "currency": "USD",
             "confidence": 0.74,
-            "startup_costs": [
-                {"name": "Engineering", "amount": 10000},
-                {"name": "Legal", "amount": 2000},
-            ],
+            "startup_costs": [{"name": "Engineering", "amount": 10000}, {"name": "Legal", "amount": 2000}],
             "unit_economics": {"cac": 50, "ltv": 300, "ltv_cac_ratio": 6},
         },
         "cfo_validation": {
@@ -54,12 +52,7 @@ def _state() -> dict:
             ],
             "errors": [],
         },
-        "head_of_sales_formal": {
-            "currency": "USD",
-            "confidence": 0.72,
-            "primary_price": 100,
-            "annual_revenue_target": 420000,
-        },
+        "head_of_sales_formal": {"currency": "USD", "confidence": 0.72, "primary_price": 100, "annual_revenue_target": 420000},
         "head_of_sales_validation": {
             "claims": [
                 {"id": "pricing.primary_price", "value": 100, "unit": "USD"},
@@ -85,8 +78,19 @@ def test_sourced_claim_has_source_and_retrieval_metadata() -> None:
     assert source["url"] == "https://example.com/market-2026"
     assert source["retrieved_at"] == "2026-09-05T10:00:00Z"
     assert source["retrieval_metadata"]["provider"] == "tavily"
+    assert source["retrieval_metadata"]["retrieval_timestamp_recorded"] is True
     evidence = next(item for item in ledger["evidence"] if item["evidence_id"] == claim["evidence_refs"][0])
     assert "420M" in evidence["excerpt"]
+
+
+def test_missing_retrieval_timestamp_is_not_fabricated() -> None:
+    state = _state()
+    state["researcher_formal"]["evidence"][0].pop("retrieved_at")
+    ledger = build_provenance_ledger(state, generated_at="2026-09-05T11:00:00Z")
+    source = ledger["sources"][0]
+    assert source["retrieved_at"] is None
+    assert source["retrieval_metadata"]["retrieval_timestamp_recorded"] is False
+    assert source["retrieval_metadata"]["captured_at"] == "2026-09-05T11:00:00Z"
 
 
 def test_derived_sales_claim_has_formula_dependencies_and_transformation() -> None:
@@ -105,11 +109,7 @@ def test_derived_finance_claim_has_component_lineage() -> None:
     claim = next(item for item in ledger["claims"] if item["claim_id"] == "finance.startup_cost")
     assert claim["method"] == "derived"
     assert claim["dependencies"] == ["finance.startup_cost.item.1", "finance.startup_cost.item.2"]
-    component_values = {
-        item["claim_id"]: item["value"]
-        for item in ledger["claims"]
-        if item["claim_id"].startswith("finance.startup_cost.item.")
-    }
+    component_values = {item["claim_id"]: item["value"] for item in ledger["claims"] if item["claim_id"].startswith("finance.startup_cost.item.")}
     assert component_values == {"finance.startup_cost.item.1": 10000.0, "finance.startup_cost.item.2": 2000.0}
 
 
