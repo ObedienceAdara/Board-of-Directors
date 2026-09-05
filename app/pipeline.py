@@ -10,18 +10,13 @@ from typing import Any, Callable
 from langgraph.graph import END, START, StateGraph
 
 from agents import ceo_adjudicate_contradictions, ceo_assemble_report, ceo_assign_tasks, ceo_evaluate_agent, panel_reaction, run_department
-from consistency_engine import consistency_bundle
+from analysis import consistency_bundle
+from analysis import compact_json
 from models import BoardState
+from orchestration import AGENT_ORDER, DynamicReadinessScheduler
 from reports import build_executive_report
-from scheduler import AGENT_ORDER, DynamicReadinessScheduler
 from tools import create_notion_board, create_notion_page, generate_pdf
 from utils import assess_run
-
-try:
-    from analysis_engine import compact_json
-except ImportError:  # pragma: no cover
-    def compact_json(value: Any, max_chars: int = 12000) -> str:
-        return json.dumps(value, ensure_ascii=False)[:max_chars]
 
 
 def run_panel(state: dict[str, Any]) -> dict[str, Any]:
@@ -101,13 +96,6 @@ def run_full_pipeline(state: BoardState) -> BoardState:
 
 
 def _notion_sections(state: BoardState) -> list[tuple[str, str]]:
-    formal_text = compact_json(state.get("formal_snapshot", {}), 18000)
-    contradiction_text = compact_json(state.get("contradiction_adjudication", {}), 12000)
-    scheduler_text = compact_json({
-        "status": state.get("scheduler_status", {}),
-        "revision_summary": state.get("revision_summary", {}),
-        "events": state.get("scheduler_events", []),
-    }, 12000)
     return [
         ("Business Brief", compact_json(state.get("brief", {}), 6000)),
         ("Research Report", str(state.get("research_report", ""))),
@@ -117,9 +105,9 @@ def _notion_sections(state: BoardState) -> list[tuple[str, str]]:
         ("Sales Strategy", str(state.get("sales_strategy", ""))),
         ("Operations Plan", str(state.get("operations_plan", ""))),
         ("Product Roadmap", str(state.get("product_roadmap", ""))),
-        ("Formal Consistency Snapshot", formal_text),
-        ("Contradiction Adjudication", contradiction_text),
-        ("Execution & Revision Summary", scheduler_text),
+        ("Formal Consistency Snapshot", compact_json(state.get("formal_snapshot", {}), 18000)),
+        ("Contradiction Adjudication", compact_json(state.get("contradiction_adjudication", {}), 12000)),
+        ("Execution & Revision Summary", compact_json({"status": state.get("scheduler_status", {}), "revision_summary": state.get("revision_summary", {})}, 10000)),
         ("CEO Board Recommendation", str(state.get("final_board_report", ""))),
     ]
 
@@ -172,18 +160,14 @@ def run_board_meeting(brief: dict[str, Any]) -> dict[str, Any]:
         state["pipeline_errors"] = [{"stage": "board_graph", "message": str(exc)}]
         runtime = assess_run(state)
     return {
-        "status": runtime["status"],
-        "success": runtime["success"],
+        "status": runtime["status"], "success": runtime["success"],
         "final_report": state.get("final_board_report", ""),
-        "notion_board_url": state.get("notion_board_url", ""),
-        "pdf_path": state.get("pdf_path", ""),
+        "notion_board_url": state.get("notion_board_url", ""), "pdf_path": state.get("pdf_path", ""),
         "revision_summary": state.get("revision_summary", {}),
         "consistency_status": state.get("consistency_status", "NOT_RUN"),
         "deterministic_contradictions": state.get("deterministic_contradictions", []),
         "contradiction_adjudication": state.get("contradiction_adjudication", {}),
         "formal_snapshot": state.get("formal_snapshot", {}),
-        "scheduler_status": state.get("scheduler_status", {}),
-        "scheduler_events": state.get("scheduler_events", []),
-        "errors": runtime["errors"],
-        "warnings": runtime["warnings"],
+        "scheduler_status": state.get("scheduler_status", {}), "scheduler_events": state.get("scheduler_events", []),
+        "errors": runtime["errors"], "warnings": runtime["warnings"],
     }
