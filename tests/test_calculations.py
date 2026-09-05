@@ -80,7 +80,8 @@ def test_workforce_model_applies_start_dates_and_ramp() -> None:
     assert result["months"][1]["capacity_hours"] == 100.0
     assert result["months"][2]["capacity_hours"] == 200.0
     assert 1 in result["capacity_gap_months"]
-    assert 2 not in result["capacity_gap_months"]
+    assert 2 in result["capacity_gap_months"]
+    assert 3 not in result["capacity_gap_months"]
 
 
 def test_delivery_model_converts_team_capacity_into_schedule() -> None:
