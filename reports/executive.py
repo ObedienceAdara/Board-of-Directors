@@ -93,6 +93,21 @@ def _risk_lines(state: dict[str, Any]) -> str:
     return "\n".join(lines[:6]) or "• No material cross-domain contradictions were recorded."
 
 
+def _first_90_days(state: dict[str, Any]) -> list[tuple[str, str]]:
+    """Turn actual board outputs into an execution sequence instead of boilerplate."""
+    pm = _extract(state.get("product_roadmap"), 3, 1000)
+    tech = _extract(state.get("tech_plan"), 3, 1000)
+    gtM = _extract(state.get("marketing_plan"), 3, 1000)
+    sales = _extract(state.get("sales_strategy"), 3, 900)
+    ops = _extract(state.get("operations_plan"), 2, 700)
+    finance = _extract(state.get("financial_plan"), 2, 700)
+    return [
+        ("0–30 days", f"{pm}\n{tech}\n• Establish the financial and customer-validation baseline.\n{finance}"),
+        ("31–60 days", f"{gtM}\n{sales}\n• Run a controlled launch with measurable acquisition and conversion targets."),
+        ("61–90 days", f"{ops}\n• Review observed economics, product adoption and delivery capacity.\n• Scale the strongest validated path, revise weak assumptions, or stop."),
+    ]
+
+
 def build_executive_report(state: dict[str, Any]) -> dict[str, Any]:
     brief = state.get("brief", {}) or {}
     idea = str(brief.get("idea", "Business Idea"))
@@ -113,7 +128,7 @@ def build_executive_report(state: dict[str, Any]) -> dict[str, Any]:
         {"title": "Operating Model", "subtitle": "People, process, capacity and execution model", "blocks": [("Operations view", _extract(state.get("operations_plan"), 6, 2200)), ("Capacity signals", _extract(state.get("product_roadmap"), 2, 800))]},
         {"title": "Product & MVP", "subtitle": "What should be built first and what should wait", "blocks": [("Product view", _extract(state.get("product_roadmap"), 7, 2500))]},
         {"title": "Risks & Contradictions", "subtitle": "The assumptions most likely to invalidate the plan", "blocks": [("Cross-functional risk register", _risk_lines(state)), ("CEO synthesis", _extract(final_report, 3, 1200))]},
-        {"title": "First 90 Days", "subtitle": "Execution sequence derived from the board analysis", "blocks": [("0–30 days", "• Validate the riskiest customer and market assumptions.\n• Lock the smallest credible MVP.\n• Establish baseline unit economics and acquisition targets."), ("31–60 days", "• Ship MVP to a controlled cohort.\n• Measure activation, conversion and retention.\n• Replace weak assumptions with observed data."), ("61–90 days", "• Double down on the strongest acquisition channel.\n• Tighten operating capacity and costs.\n• Decide whether to scale, iterate or stop.")]},
+        {"title": "First 90 Days", "subtitle": "Execution sequence derived from the board analysis", "blocks": _first_90_days(state)},
         {"title": "Assumptions & Evidence", "subtitle": "What is known, inferred and still uncertain", "blocks": [("Source / evidence posture", _extract(state.get("research_report"), 5, 2100)), ("Open questions", _extract(state.get("contradiction_adjudication"), 4, 1500))]},
         {"title": "Final Board Recommendation", "subtitle": "The decision page", "blocks": [("Recommendation", _extract(final_report, 7, 2600)), ("Non-negotiables", "• Do not treat unsupported assumptions as facts.\n• Resolve material contradictions before committing significant capital.\n• Re-run the board when core pricing, budget, timeline or market assumptions change.")]},
     ]
