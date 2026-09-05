@@ -79,6 +79,32 @@ def _strategic_metrics(state: dict[str, Any]) -> list[tuple[str, str]]:
     return metrics[:12]
 
 
+def _calculation_metrics(state: dict[str, Any]) -> str:
+    calculations = state.get("phase2_calculations", {}) or {}
+    if not isinstance(calculations, dict):
+        return "• Deterministic Phase 2 calculations were not generated."
+    finance = calculations.get("finance", {})
+    sales = calculations.get("sales", {})
+    operations = calculations.get("operations", {})
+    technical = calculations.get("technical", {})
+    product = calculations.get("product", {})
+    if not all(isinstance(item, dict) for item in (finance, sales, operations, technical, product)):
+        return "• Phase 2 calculation payload is incomplete."
+    lines = [
+        f"• 12-month revenue: {finance.get('12_month_revenue')}",
+        f"• Gross margin: {float(finance.get('gross_margin', 0)) * 100:.1f}%",
+        f"• Contribution margin: {finance.get('contribution_margin')}",
+        f"• Ending cash: {finance.get('ending_cash')}",
+        f"• Runway: {finance.get('runway_months')}",
+        f"• Break-even month: {finance.get('break_even_month')}",
+        f"• Sales target gap: {sales.get('target_gap')}",
+        f"• Peak workforce capacity: {operations.get('peak_capacity_hours')} hours/month",
+        f"• Delivery duration: {technical.get('delivery_duration_weeks')} weeks",
+        f"• MVP features ranked: {len(product.get('mvp_features', []))}",
+    ]
+    return "\n".join(lines)
+
+
 def _provenance_metrics(state: dict[str, Any]) -> str:
     summary = state.get("provenance_summary", {}) or {}
     if not isinstance(summary, dict) or not summary:
@@ -133,6 +159,7 @@ def build_executive_report(state: dict[str, Any]) -> dict[str, Any]:
     idea = str(brief.get("idea", "Business Idea"))
     metrics = _strategic_metrics(state)
     metric_text = "\n".join(f"• {label}: {value}" for label, value in metrics) or "• No normalized metrics available."
+    calculation_text = _calculation_metrics(state)
     final_report = _clean(state.get("final_board_report", ""))
     consistency = str(state.get("consistency_status", "NOT_RUN"))
     scheduler = state.get("scheduler_status", {}) or {}
@@ -140,13 +167,13 @@ def build_executive_report(state: dict[str, Any]) -> dict[str, Any]:
     total = len(scheduler)
 
     pages = [
-        {"title": "Executive Decision Brief", "subtitle": "What the board believes, what matters most, and what to do next", "blocks": [("Decision", _extract(final_report, 4, 1900)), ("Key Metrics", metric_text), ("Board Integrity", f"Consistency: {consistency}. Department execution: {passed}/{total} passed.")]},
+        {"title": "Executive Decision Brief", "subtitle": "What the board believes, what matters most, and what to do next", "blocks": [("Decision", _extract(final_report, 4, 1900)), ("Computed Phase 2 Results", calculation_text), ("Key Metrics", metric_text), ("Board Integrity", f"Consistency: {consistency}. Department execution: {passed}/{total} passed.")]},
         {"title": "The Opportunity", "subtitle": "Market attractiveness and strategic rationale", "blocks": [("Market evidence", _extract(state.get("research_report"), 5, 2000)), ("Founder / fit", _extract(brief.get("founder_background"), 2, 700))]},
-        {"title": "Financial Case", "subtitle": "Economics, capital requirements, and viability", "blocks": [("Financial view", _extract(state.get("financial_plan"), 6, 2200)), ("Normalized metrics", metric_text)]},
-        {"title": "Technical Feasibility", "subtitle": "Architecture, constraints, delivery risk and MVP boundary", "blocks": [("Engineering view", _extract(state.get("tech_plan"), 6, 2200))]},
-        {"title": "Go-To-Market", "subtitle": "Positioning, channels and demand generation", "blocks": [("Marketing view", _extract(state.get("marketing_plan"), 6, 2200)), ("Sales engine", _extract(state.get("sales_strategy"), 4, 1500))]},
-        {"title": "Operating Model", "subtitle": "People, process, capacity and execution model", "blocks": [("Operations view", _extract(state.get("operations_plan"), 6, 2200)), ("Capacity signals", _extract(state.get("product_roadmap"), 2, 800))]},
-        {"title": "Product & MVP", "subtitle": "What should be built first and what should wait", "blocks": [("Product view", _extract(state.get("product_roadmap"), 7, 2500))]},
+        {"title": "Financial Case", "subtitle": "Economics, capital requirements, and viability", "blocks": [("Financial view", _extract(state.get("financial_plan"), 6, 2200)), ("Deterministic financial model", calculation_text), ("Normalized metrics", metric_text)]},
+        {"title": "Technical Feasibility", "subtitle": "Architecture, constraints, delivery risk and MVP boundary", "blocks": [("Engineering view", _extract(state.get("tech_plan"), 6, 2200)), ("Deterministic delivery model", _calculation_metrics(state))]},
+        {"title": "Go-To-Market", "subtitle": "Positioning, channels and demand generation", "blocks": [("Marketing view", _extract(state.get("marketing_plan"), 6, 2200)), ("Sales engine", _extract(state.get("sales_strategy"), 4, 1500)), ("Deterministic funnel", _extract(state.get("phase2_calculations", {}).get("sales", {}), 4, 1000) if isinstance(state.get("phase2_calculations"), dict) else "") ]},
+        {"title": "Operating Model", "subtitle": "People, process, capacity and execution model", "blocks": [("Operations view", _extract(state.get("operations_plan"), 6, 2200)), ("Deterministic workforce", _extract(state.get("phase2_calculations", {}).get("operations", {}), 4, 1200) if isinstance(state.get("phase2_calculations"), dict) else "") ]},
+        {"title": "Product & MVP", "subtitle": "What should be built first and what should wait", "blocks": [("Product view", _extract(state.get("product_roadmap"), 7, 2500)), ("Deterministic priority model", _extract(state.get("phase2_calculations", {}).get("product", {}), 4, 1300) if isinstance(state.get("phase2_calculations"), dict) else "") ]},
         {"title": "Risks & Contradictions", "subtitle": "The assumptions most likely to invalidate the plan", "blocks": [("Cross-functional risk register", _risk_lines(state)), ("CEO synthesis", _extract(final_report, 3, 1200))]},
         {"title": "First 90 Days", "subtitle": "Execution sequence derived from the board analysis", "blocks": _first_90_days(state)},
         {"title": "Assumptions & Evidence", "subtitle": "What is known, inferred and still uncertain", "blocks": [("Provenance integrity", _provenance_metrics(state)), ("Source / evidence posture", _extract(state.get("research_report"), 5, 1900)), ("Open questions", _extract(state.get("contradiction_adjudication"), 4, 1300))]},
