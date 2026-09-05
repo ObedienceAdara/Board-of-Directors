@@ -44,6 +44,7 @@ from formal_agents import (
     run_department,
     ROLES,
 )
+from runtime import assess_run
 from scheduler import AGENT_ORDER, DynamicReadinessScheduler
 from state import BoardState, EVALUATED_AGENTS
 from tools import create_notion_board, create_notion_page, generate_pdf
@@ -76,6 +77,7 @@ def initialize_state(brief: dict[str, Any]) -> BoardState:
         scheduler_status={}, scheduler_events=[], revision_summary={},
         formal_snapshot={}, deterministic_contradictions=[], contradiction_adjudication={},
         consistency_status="NOT_RUN", notion_board_url="", pdf_path="",
+        pipeline_errors=[], output_errors=[],
     )
 
 
@@ -90,28 +92,34 @@ def run_formal_board(state: BoardState) -> BoardState:
     return scheduler.run(state)
 
 
+def _run_stage(state: BoardState, stage: str, fn) -> BoardState:
+    """Execute one pipeline stage and preserve a truthful failure record."""
+    try:
+        state.update(fn(state))
+    except Exception as exc:
+        state.setdefault("pipeline_errors", []).append({"stage": stage, "message": str(exc)})
+        print(f"{stage} failed: {exc}")
+    return state
+
+
 def run_full_pipeline(state: BoardState) -> BoardState:
     print("\n" + "=" * 70)
     print("BOARD OF DIRECTORS AI v3 — FORMAL ANALYSIS ENGINE")
     print("=" * 70)
 
-    print("\n[1/6] Initial panel — seven independent reactions")
-    state.update(run_panel(state))
-
-    print("\n[2/6] CEO — targeted task allocation")
-    state.update(ceo_assign_tasks(state))
-
-    print("\n[3/6] Dynamic readiness scheduler — formal departmental analysis")
-    state = run_formal_board(state)
-
-    print("\n[4/6] Deterministic global consistency pass")
-    state.update(adjudicate_contradictions(state))
-
-    print("\n[5/6] LLM contradiction adjudication")
-    state.update(ceo_adjudicate_contradictions(state))
-
-    print("\n[6/6] CEO final synthesis")
-    state.update(ceo_assemble_report(state))
+    stages = [
+        ("panel", "[1/6] Initial panel — seven independent reactions", run_panel),
+        ("ceo_task_assignment", "[2/6] CEO — targeted task allocation", ceo_assign_tasks),
+        ("formal_scheduler", "[3/6] Dynamic readiness scheduler — formal departmental analysis", run_formal_board),
+        ("deterministic_consistency", "[4/6] Deterministic global consistency pass", adjudicate_contradictions),
+        ("contradiction_adjudication", "[5/6] LLM contradiction adjudication", ceo_adjudicate_contradictions),
+        ("ceo_synthesis", "[6/6] CEO final synthesis", ceo_assemble_report),
+    ]
+    for stage, label, fn in stages:
+        print(f"\n{label}")
+        state = _run_stage(state, stage, fn)
+        if state.get("pipeline_errors"):
+            break
     return state
 
 
@@ -150,8 +158,15 @@ def node_output(state: BoardState) -> BoardState:
             for title, content in sections:
                 create_notion_page(notion_board_id, title, content)
             notion_url = f"https://notion.so/{notion_board_id.replace('-', '')}"
+        else:
+            state.setdefault("output_errors", []).append({
+                "stage": "notion",
+                "message": "Notion board creation returned no page ID; check credentials and database configuration.",
+            })
     except Exception as exc:
-        print(f"Notion output failed: {exc}")
+        message = str(exc)
+        state.setdefault("output_errors", []).append({"stage": "notion", "message": message})
+        print(f"Notion output failed: {message}")
 
     pdf_filename = ""
     try:
@@ -167,7 +182,9 @@ def node_output(state: BoardState) -> BoardState:
             ],
         }, pdf_filename)
     except Exception as exc:
-        print(f"PDF output failed: {exc}")
+        message = str(exc)
+        state.setdefault("output_errors", []).append({"stage": "pdf", "message": message})
+        print(f"PDF output failed: {message}")
 
     state["notion_board_url"] = notion_url
     state["pdf_path"] = pdf_filename
@@ -189,8 +206,31 @@ board_graph = build_board_graph()
 
 
 def run_board_meeting(brief: dict[str, Any]) -> dict[str, Any]:
-    final_state = board_graph.invoke(initialize_state(brief))
+    try:
+        final_state = board_graph.invoke(initialize_state(brief))
+    except Exception as exc:
+        error = {"stage": "board_graph", "message": str(exc)}
+        return {
+            "status": "failed",
+            "success": False,
+            "final_report": "",
+            "notion_board_url": "",
+            "pdf_path": "",
+            "revision_summary": {},
+            "consistency_status": "NOT_RUN",
+            "deterministic_contradictions": [],
+            "contradiction_adjudication": {},
+            "formal_snapshot": {},
+            "scheduler_status": {},
+            "scheduler_events": [],
+            "errors": [error],
+            "warnings": [],
+        }
+
+    runtime_status = assess_run(final_state)
     return {
+        "status": runtime_status["status"],
+        "success": runtime_status["success"],
         "final_report": final_state.get("final_board_report", ""),
         "notion_board_url": final_state.get("notion_board_url", ""),
         "pdf_path": final_state.get("pdf_path", ""),
@@ -201,6 +241,8 @@ def run_board_meeting(brief: dict[str, Any]) -> dict[str, Any]:
         "formal_snapshot": final_state.get("formal_snapshot", {}),
         "scheduler_status": final_state.get("scheduler_status", {}),
         "scheduler_events": final_state.get("scheduler_events", []),
+        "errors": runtime_status["errors"],
+        "warnings": runtime_status["warnings"],
     }
 
 

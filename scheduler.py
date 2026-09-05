@@ -43,9 +43,9 @@ class DynamicReadinessScheduler:
         self.dependencies = dependencies or DEPENDENCIES
 
     def _ready(self, agent: str, status: dict[str, str]) -> bool:
-        if status.get(agent) not in {"pending", "retry"}:
-            return False
-        return all(status.get(dep) == "passed" for dep in self.dependencies.get(agent, ()))
+        return status.get(agent) in {"pending", "retry"} and all(
+            status.get(dep) == "passed" for dep in self.dependencies.get(agent, ())
+        )
 
     @staticmethod
     def _snapshot(state: dict[str, Any]) -> dict[str, Any]:
@@ -55,23 +55,19 @@ class DynamicReadinessScheduler:
         status = {agent: "pending" for agent in AGENT_ORDER}
         revisions = {agent: 0 for agent in AGENT_ORDER}
         events: list[dict[str, Any]] = []
-        running: dict[Future[Any], tuple[str, int, str]] = {}
+        running: dict[Future[Any], tuple[str, int]] = {}
 
         with ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="board-agent") as pool:
             while True:
-                # Dynamic dispatch. A branch becoming ready is enough to launch
-                # it; it does not wait for unrelated branches to finish.
                 for agent in AGENT_ORDER:
-                    if len(running) >= self.max_workers:
-                        break
-                    if not self._ready(agent, status):
+                    if len(running) >= self.max_workers or not self._ready(agent, status):
                         continue
                     status[agent] = "running"
                     revisions[agent] += 1
                     revision = revisions[agent]
                     snapshot = self._snapshot(state)
                     future = pool.submit(self.runner, agent, snapshot)
-                    running[future] = (agent, revision, now_iso())
+                    running[future] = (agent, revision)
                     events.append({
                         "event": "dispatch",
                         "agent": agent,
@@ -88,39 +84,72 @@ class DynamicReadinessScheduler:
 
                 done, _ = wait(list(running), return_when=FIRST_COMPLETED)
                 for future in done:
-                    agent, revision, dispatched_at = running.pop(future)
+                    agent, revision = running.pop(future)
                     events.append({"event": "complete", "agent": agent, "revision": revision, "timestamp": now_iso()})
+                    execution_error = ""
                     try:
                         output = future.result()
                     except Exception as exc:
-                        output = {f"{agent}_execution_error": str(exc)}
-                        events.append({"event": "execution_error", "agent": agent, "revision": revision, "error": str(exc), "timestamp": now_iso()})
+                        execution_error = str(exc)
+                        output = {f"{agent}_execution_error": execution_error}
+                        events.append({
+                            "event": "execution_error",
+                            "agent": agent,
+                            "revision": revision,
+                            "error": execution_error,
+                            "timestamp": now_iso(),
+                        })
+
                     state.update(output)
                     state[f"{agent}_revisions"] = revision
 
                     evaluation = self.evaluator(agent, self._snapshot(state))
                     state[f"{agent}_evaluation"] = evaluation
-                    passed = bool(evaluation.get("passed", False))
+                    passed = bool(evaluation.get("passed", False)) and not execution_error
                     feedback = str(evaluation.get("feedback", ""))
+                    if execution_error:
+                        feedback = (feedback + " Execution failed: " + execution_error).strip()
                     state[f"{agent}_feedback"] = feedback
 
-                    if passed or revision >= self.max_revisions:
+                    if passed:
                         status[agent] = "passed"
                         state[f"{agent}_passed"] = True
-                        if not passed:
-                            state[f"{agent}_forced_accept"] = True
-                    else:
+                    elif revision < self.max_revisions:
                         status[agent] = "retry"
                         state[f"{agent}_passed"] = False
+                    else:
+                        status[agent] = "failed"
+                        state[f"{agent}_passed"] = False
+                        state[f"{agent}_forced_accept"] = False
+                        events.append({
+                            "event": "failed",
+                            "agent": agent,
+                            "revision": revision,
+                            "reason": feedback or "Evaluation failed after maximum revisions.",
+                            "timestamp": now_iso(),
+                        })
 
                     events.append({
                         "event": "evaluation",
                         "agent": agent,
                         "revision": revision,
                         "passed": passed,
-                        "forced_accept": bool(state.get(f"{agent}_forced_accept", False)),
+                        "forced_accept": False,
+                        "status": status[agent],
                         "timestamp": now_iso(),
                     })
+
+                    # Dependants must never run after an upstream hard failure.
+                    if status[agent] == "failed":
+                        for dependant, deps in self.dependencies.items():
+                            if agent in deps and status.get(dependant) in {"pending", "retry"}:
+                                status[dependant] = "blocked"
+                                events.append({
+                                    "event": "blocked",
+                                    "agent": dependant,
+                                    "blocked_by": agent,
+                                    "timestamp": now_iso(),
+                                })
 
         state["scheduler_status"] = status
         state["revision_summary"] = revisions
