@@ -17,11 +17,15 @@ from tools import create_notion_board, create_notion_page, generate_pdf
 from utils import assess_run
 
 
-def run_panel(state: dict[str, Any]) -> dict[str, Any]:
+def run_panel(state: BoardState) -> dict[str, Any]:
     """Seven-way one-shot panel fan-out."""
+    panel_state = cast(dict[str, Any], state)
     result: dict[str, Any] = {}
     with ThreadPoolExecutor(max_workers=7, thread_name_prefix="board-panel") as pool:
-        futures = {pool.submit(panel_reaction, state, agent, agent.replace("_", " ").title()): agent for agent in AGENT_ORDER}
+        futures = {
+            pool.submit(panel_reaction, panel_state, agent, agent.replace("_", " ").title()): agent
+            for agent in AGENT_ORDER
+        }
         for future in as_completed(futures):
             result.update(future.result())
     return result
@@ -64,7 +68,7 @@ def run_formal_board(state: BoardState) -> BoardState:
 
 def _run_stage(state: BoardState, stage: str, fn: Callable[[BoardState], Mapping[str, Any]]) -> BoardState:
     try:
-        state.update(dict(fn(state)))
+        cast(dict[str, Any], state).update(dict(fn(state)))
     except Exception as exc:
         state.setdefault("pipeline_errors", []).append({"stage": stage, "message": str(exc)})
     return state
