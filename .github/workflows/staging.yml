@@ -1,5 +1,10 @@
 name: Staging Integration
-on: workflow_dispatch
+on:
+  push:
+    branches:
+      - main
+      - phase0-runtime-verification
+  workflow_dispatch:
 jobs:
   staging:
     name: Real Groq + Tavily + Notion + PDF board run
