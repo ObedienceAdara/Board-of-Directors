@@ -26,6 +26,8 @@ from datetime import datetime
 from typing import Any
 
 from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from langchain_core.runnables import RunnableLambda
@@ -33,8 +35,6 @@ from langgraph.graph import END, START, StateGraph
 from langserve import add_routes
 
 from formal_agents import (
-    MODELS,
-    ROLES,
     adjudicate_contradictions,
     ceo_adjudicate_contradictions,
     ceo_assemble_report,
@@ -42,12 +42,11 @@ from formal_agents import (
     ceo_evaluate_agent,
     panel_reaction,
     run_department,
+    ROLES,
 )
 from scheduler import AGENT_ORDER, DynamicReadinessScheduler
 from state import BoardState, EVALUATED_AGENTS
 from tools import create_notion_board, create_notion_page, generate_pdf
-
-load_dotenv()
 
 
 def run_panel(state: dict[str, Any]) -> dict[str, Any]:
@@ -82,15 +81,9 @@ def initialize_state(brief: dict[str, Any]) -> BoardState:
 
 def run_formal_board(state: BoardState) -> BoardState:
     """Execute the dependency DAG dynamically; no fixed tiers."""
-    def runner(agent: str, snapshot: dict[str, Any]) -> dict[str, Any]:
-        return run_department(agent, snapshot)
-
-    def evaluator(agent: str, snapshot: dict[str, Any]) -> dict[str, Any]:
-        return ceo_evaluate_agent(agent, snapshot)
-
     scheduler = DynamicReadinessScheduler(
-        runner=runner,
-        evaluator=evaluator,
+        runner=lambda agent, snapshot: run_department(agent, snapshot),
+        evaluator=lambda agent, snapshot: ceo_evaluate_agent(agent, snapshot),
         max_workers=7,
         max_revisions=3,
     )
