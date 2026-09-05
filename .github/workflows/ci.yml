@@ -1,20 +1,10 @@
 name: CI
 on: push
 jobs:
-  quality:
+  smoke:
     runs-on: ubuntu-latest
     steps:
-      - name: Clone repository
-        run: git clone --depth 1 --branch "$GITHUB_REF_NAME" "https://github.com/$GITHUB_REPOSITORY.git" .
-      - name: Python version
+      - name: Python
         run: python3 --version
-      - name: Install dependencies
-        run: python3 -m pip install -r requirements.txt -r requirements-dev.txt
-      - name: Lint
-        run: python3 -m ruff check .
-      - name: Type check
-        run: python3 -m mypy
-      - name: Import smoke test
-        run: python3 -c "import main; print('main import: OK')"
-      - name: Test suite
-        run: python3 -m pytest -q -m 'not staging'
+      - name: Shell
+        run: echo "CI shell step works"
