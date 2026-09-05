@@ -50,6 +50,7 @@ def run_phase2_calculations(state: dict[str, Any]) -> dict[str, Any]:
         "default_ramp_months": coo.get("default_ramp_months", 1),
         "required_monthly_customers": max((row["new_customers"] for row in sales_model["months"]), default=0.0),
     })
+    workforce["annual_payroll"] = workforce.get("annual_payroll_run_rate", 0.0)
 
     payroll_monthly = [float(row["payroll"]) for row in workforce["months"]]
     if not any(payroll_monthly):
@@ -62,7 +63,6 @@ def run_phase2_calculations(state: dict[str, Any]) -> dict[str, Any]:
         "starting_cash": cfo.get("starting_cash", 0),
         "price": sales.get("primary_price", 0),
         "starting_customers": sales.get("starting_customers", 0),
-        # The deterministic funnel, not the LLM's target table, controls customer acquisition.
         "monthly_new_customers": [row["new_customers"] for row in sales_model["months"]],
         "churn_rate": sales.get("monthly_churn_rate", sales.get("churn_rate", 0)),
         "cogs_per_customer": cfo.get("cogs_per_customer", 0),
