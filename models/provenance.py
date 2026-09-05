@@ -118,12 +118,12 @@ def _dependencies(claim_id: str, analysis: dict[str, Any]) -> list[str]:
     items = analysis.get(items_key, [])
     if not isinstance(items, list):
         return []
-    result = []
+    result: list[str] = []
     for i, item in enumerate(items[:50], 1):
         if isinstance(item, dict) and _number(item.get(value_key)) is not None:
             if claim_id == "operations.annual_payroll" and _number(item.get("count")) is None:
                 continue
-            result.append(f"{prefix}.{i}" if not prefix.endswith("item") else f"{prefix}.{i}")
+            result.append(f"{prefix}.{i}")
     return result
 
 
@@ -162,7 +162,7 @@ def _evidence_from_state(state: dict[str, Any], captured_at: str) -> tuple[list[
             observed_item = observed.get(url, {})
             title = _text(observed_item.get("title") or item.get("source_title") or item.get("title") or item.get("source_name"), 400) or url
             source_id = _stable_id("SRC", url)
-            source = {
+            source_by = sources_by_id.setdefault(source_id, {
                 "source_id": source_id,
                 "url": url,
                 "title": title,
@@ -178,12 +178,10 @@ def _evidence_from_state(state: dict[str, Any], captured_at: str) -> tuple[list[
                     "retrieval_timestamp_recorded": bool(observed_item.get("retrieved_at")),
                     "captured_at": captured_at,
                 },
-            }
-            sources_by_id[source_id] = source
-            evidence_id = f"EVID-{evidence_counter:04d}"
+            })
             evidence_records.append({
-                "evidence_id": evidence_id,
-                "source_id": source_id,
+                "evidence_id": f"EVID-{evidence_counter:04d}",
+                "source_id": source_by["source_id"],
                 "agent": agent,
                 "claim_id": _text(item.get("claim_id"), 180) or None,
                 "evidence_type": "source_excerpt",
@@ -234,7 +232,8 @@ def build_provenance_ledger(state: dict[str, Any], generated_at: str | None = No
             dependencies = _dependencies(claim_id, analysis)
             method = "derived" if formula_info else "agent_assertion"
             formula = formula_info[0] if formula_info else None
-            evidence_refs, source_refs = [], []
+            evidence_refs: list[str] = []
+            source_refs: list[str] = []
             for evidence_id, ev in evidence_by_id.items():
                 if ev.get("agent") == agent and _match_evidence(claim_id, raw.get("value"), str(raw.get("unit", "")), ev):
                     evidence_refs = [evidence_id]
@@ -282,13 +281,32 @@ def build_provenance_ledger(state: dict[str, Any], generated_at: str | None = No
 
     claim_ids = sorted({str(x["claim_id"]) for x in claims if x.get("claim_id")})
     contradictions = [str(x["id"]) for x in state.get("deterministic_contradictions", []) or [] if isinstance(x, dict) and x.get("id")]
-    decisions = [{"decision_id": "board.recommendation", "decision_type": "board_recommendation", "agent": "ceo", "decision_text": _text(state.get("final_board_report"), 2400), "claim_refs": claim_ids, "contradiction_refs": contradictions, "consistency_status": _text(state.get("consistency_status"), 80) or "NOT_RUN", "created_at": captured_at}]
+    decisions: list[dict[str, Any]] = [{
+        "decision_id": "board.recommendation",
+        "decision_type": "board_recommendation",
+        "agent": "ceo",
+        "decision_text": _text(state.get("final_board_report"), 2400),
+        "claim_refs": claim_ids,
+        "contradiction_refs": contradictions,
+        "consistency_status": _text(state.get("consistency_status"), 80) or "NOT_RUN",
+        "created_at": captured_at,
+    }]
     adjudication = state.get("contradiction_adjudication", {}) or {}
     issues = adjudication.get("issues", []) if isinstance(adjudication, dict) else []
     if isinstance(issues, list):
         for issue in issues[:MAX_LEDGER_DECISIONS - 1]:
             if isinstance(issue, dict) and issue.get("id"):
-                decisions.append({"decision_id": f"contradiction.{issue['id']}", "decision_type": "contradiction_adjudication", "agent": "ceo", "decision_text": _text(issue.get("resolution") or issue.get("rationale"), 1500), "claim_refs": [str(issue["claim_id"])] if issue.get("claim_id") else claim_ids[:20], "contradiction_refs": [str(issue["id"])], "verdict": _text(issue.get("verdict"), 80) or "INSUFFICIENT_EVIDENCE", "confidence": _confidence(issue.get("confidence"), 0.5), "created_at": captured_at})
+                decisions.append({
+                    "decision_id": f"contradiction.{issue['id']}",
+                    "decision_type": "contradiction_adjudication",
+                    "agent": "ceo",
+                    "decision_text": _text(issue.get("resolution") or issue.get("rationale"), 1500),
+                    "claim_refs": [str(issue["claim_id"])] if issue.get("claim_id") else claim_ids[:20],
+                    "contradiction_refs": [str(issue["id"])],
+                    "verdict": _text(issue.get("verdict"), 80) or "INSUFFICIENT_EVIDENCE",
+                    "confidence": _confidence(issue.get("confidence"), 0.5),
+                    "created_at": captured_at,
+                })
 
     total = len(claims)
     sourced = sum(1 for x in claims if x.get("source_refs"))
