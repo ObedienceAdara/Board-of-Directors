@@ -35,6 +35,7 @@ def _state() -> dict:
             "provider": "tavily",
             "score": 0.93,
             "published_at": "2026-08-20",
+            "content": "The market is estimated at $420M.",
         }],
         "researcher_validation": {"claims": [{"id": "market.sam", "value": 420000000, "unit": "USD", "confidence": 0.81}], "errors": []},
         "cfo_formal": {"currency": "USD", "confidence": 0.74, "startup_costs": [{"name": "Engineering", "amount": 10000}, {"name": "Legal", "amount": 2000}], "unit_economics": {"cac": 50, "ltv": 300, "ltv_cac_ratio": 6}},
@@ -61,8 +62,11 @@ def test_sourced_claim_has_source_and_retrieval_metadata() -> None:
     assert source["retrieval_metadata"]["query"] == "serviceable available market 2026"
     assert source["retrieval_metadata"]["rank"] == 1
     assert source["retrieval_metadata"]["score"] == 0.93
+    assert source["retrieval_metadata"]["captured_at"] == ledger["generated_at"]
     evidence = next(item for item in ledger["evidence"] if item["evidence_id"] == claim["evidence_refs"][0])
     assert "420M" in evidence["excerpt"]
+    assert evidence["observed_excerpt"] == "The market is estimated at $420M."
+    assert evidence["excerpt_origin"] == "agent_submitted_plus_tool_observed"
 
 
 def test_missing_retrieval_timestamp_is_not_fabricated() -> None:
@@ -101,6 +105,51 @@ def test_agent_assertion_without_source_is_explicitly_unsourced() -> None:
     assert claim["method"] == "agent_assertion"
     assert claim["source_refs"] == []
     assert claim["evidence_refs"] == []
+
+
+def test_explicit_claim_id_prevents_numeric_misattribution() -> None:
+    state = _state()
+    state["researcher_formal"]["evidence"].append({
+        "claim_id": "market.tam",
+        "claim": "total addressable market is also 420M",
+        "value": 420000000,
+        "unit": "USD",
+        "source_title": "Wrong Claim Source",
+        "source_url": "https://example.com/tam",
+        "evidence_excerpt": "TAM is 420M.",
+    })
+    ledger = build_provenance_ledger(state)
+    sam = next(item for item in ledger["claims"] if item["claim_id"] == "market.sam")
+    assert len(sam["evidence_refs"]) == 1
+    sam_evidence = next(item for item in ledger["evidence"] if item["evidence_id"] == sam["evidence_refs"][0])
+    assert sam_evidence["claim_id"] == "market.sam"
+
+
+def test_same_url_has_stable_source_identity_across_title_changes() -> None:
+    state = _state()
+    state["researcher_formal"]["evidence"].append({
+        "claim_id": "market.tam",
+        "claim": "total addressable market is 500M",
+        "value": 500000000,
+        "unit": "USD",
+        "source_title": "Second Model Title",
+        "source_url": "https://example.com/market-2026",
+        "evidence_excerpt": "The market is estimated at $500M.",
+    })
+    state["researcher_retrieval_trace"].append({
+        "url": "https://example.com/market-2026",
+        "title": "Tool Updated Title",
+        "publisher": "Tool Observed Publisher",
+        "query": "market updated search",
+        "rank": 2,
+        "retrieved_at": "2026-09-05T10:05:00Z",
+        "provider": "tavily",
+        "score": 0.88,
+        "content": "The market is estimated at $500M.",
+    })
+    state["researcher_validation"]["claims"].append({"id": "market.tam", "value": 500000000, "unit": "USD"})
+    ledger = build_provenance_ledger(state)
+    assert len(ledger["sources"]) == 1
 
 
 def test_ledger_is_json_serializable_and_internal_references_validate() -> None:
