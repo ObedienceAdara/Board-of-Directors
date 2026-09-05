@@ -44,7 +44,7 @@ def test_financial_runway_is_not_fabricated_when_cash_is_zero() -> None:
         "other_monthly": [0],
     })
     assert result["runway_months"] == 0.0
-    assert result["break_even_month"] == 1
+    assert result["break_even_month"] is None
 
 
 def test_sales_funnel_connects_traffic_to_customers_and_revenue() -> None:
