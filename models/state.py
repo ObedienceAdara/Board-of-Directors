@@ -105,6 +105,9 @@ class BoardState(TypedDict, total=False):
     deterministic_contradictions: list[dict[str, Any]]
     contradiction_adjudication: dict[str, Any]
     consistency_status: str
+    provenance_ledger: dict[str, Any]
+    provenance_validation: dict[str, Any]
+    provenance_summary: dict[str, Any]
     final_board_report: str
     notion_board_url: str
     pdf_path: str
