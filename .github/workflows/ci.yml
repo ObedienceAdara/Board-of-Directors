@@ -1,10 +1,12 @@
 name: CI
 on: push
 jobs:
-  smoke:
+  quality:
     runs-on: ubuntu-latest
     steps:
+      - name: Clone repository
+        run: git clone --depth 1 --branch "$GITHUB_REF_NAME" "https://github.com/$GITHUB_REPOSITORY.git" .
       - name: Python
         run: python3 --version
-      - name: Shell
-        run: echo "CI shell step works"
+      - name: Install dependencies
+        run: python3 -m pip install -r requirements.txt -r requirements-dev.txt
