@@ -42,7 +42,11 @@ async def security_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-board_runnable = RunnableLambda(lambda inputs: run_board_meeting(inputs["brief"]))
+def _invoke_board(inputs: dict[str, Any]) -> dict[str, Any]:
+    return run_board_meeting(inputs["brief"])
+
+
+board_runnable: RunnableLambda = RunnableLambda(_invoke_board)
 add_routes(app, board_runnable, path="/board-meeting")
 
 
