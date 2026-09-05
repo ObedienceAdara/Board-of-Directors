@@ -68,16 +68,18 @@ def _run_stage(state: BoardState, stage: str, fn: Callable[[BoardState], Mapping
     return state
 
 
+def _run_domain_calculations(state: BoardState) -> dict[str, Any]:
+    result = run_phase2_calculations(cast(dict[str, Any], state))
+    return {"phase2_calculations": result, "phase2_input_quality": result.get("input_quality", {})}
+
+
 def _deterministic_consistency(state: BoardState) -> dict[str, Any]:
     formal = {agent: cast(dict[str, Any], state.get(f"{agent}_formal", {})) for agent in AGENT_ORDER}
     validations = {agent: cast(dict[str, Any], state.get(f"{agent}_validation", {})) for agent in AGENT_ORDER}
     snapshot = consistency_bundle(state["brief"], formal, validations)
+    snapshot["phase2_calculations"] = cast(dict[str, Any], state.get("phase2_calculations", {}))
+    snapshot["phase2_input_quality"] = cast(dict[str, Any], state.get("phase2_input_quality", {}))
     return {"formal_snapshot": snapshot, "deterministic_contradictions": snapshot.get("cross_domain_contradictions", [])}
-
-
-def _run_domain_calculations(state: BoardState) -> dict[str, Any]:
-    result = run_phase2_calculations(cast(dict[str, Any], state))
-    return {"phase2_calculations": result, "phase2_input_quality": result.get("input_quality", {})}
 
 
 def _build_provenance(state: BoardState) -> dict[str, Any]:
@@ -104,20 +106,24 @@ def run_full_pipeline(state: BoardState) -> BoardState:
 
 
 def _notion_sections(state: BoardState) -> list[tuple[str, str]]:
+    calculations = state.get("phase2_calculations", {})
+    calculations = calculations if isinstance(calculations, dict) else {}
     return [
         ("Business Brief", compact_json(state.get("brief", {}), 6000)),
         ("Research Report", str(state.get("research_report", ""))),
         ("Financial Plan", str(state.get("financial_plan", ""))),
-        ("Deterministic Financial & Scenario Model", compact_json(state.get("phase2_calculations", {}).get("finance", {}), 22000) if isinstance(state.get("phase2_calculations"), dict) else ""),
-        ("Sales Funnel Calculation", compact_json(state.get("phase2_calculations", {}).get("sales", {}), 18000) if isinstance(state.get("phase2_calculations"), dict) else ""),
-        ("Workforce & Capacity Calculation", compact_json(state.get("phase2_calculations", {}).get("operations", {}), 18000) if isinstance(state.get("phase2_calculations"), dict) else ""),
-        ("Technical Delivery Calculation", compact_json(state.get("phase2_calculations", {}).get("technical", {}), 14000) if isinstance(state.get("phase2_calculations"), dict) else ""),
-        ("Product Priority Calculation", compact_json(state.get("phase2_calculations", {}).get("product", {}), 16000) if isinstance(state.get("phase2_calculations"), dict) else ""),
+        ("Deterministic Financial & Scenario Model", compact_json(calculations.get("finance", {}), 22000)),
+        ("Financial Scenario Analysis", compact_json(calculations.get("finance_scenarios", {}), 24000)),
+        ("Sales Funnel Calculation", compact_json(calculations.get("sales", {}), 18000)),
+        ("Workforce & Capacity Calculation", compact_json(calculations.get("operations", {}), 18000)),
+        ("Technical Delivery Calculation", compact_json(calculations.get("technical", {}), 14000)),
+        ("Product Priority Calculation", compact_json(calculations.get("product", {}), 16000)),
+        ("Phase 2 Input Quality", compact_json(state.get("phase2_input_quality", {}), 8000)),
         ("Formal Consistency Snapshot", compact_json(state.get("formal_snapshot", {}), 18000)),
         ("Contradiction Adjudication", compact_json(state.get("contradiction_adjudication", {}), 12000)),
         ("Evidence & Provenance Ledger", compact_json(state.get("provenance_ledger", {}), 26000)),
         ("Provenance Validation", compact_json(state.get("provenance_validation", {}), 6000)),
-        ("Execution & Revision Summary", compact_json({"status": state.get("scheduler_status", {}), "revision_summary": state.get("revision_summary", {}), "phase2_input_quality": state.get("phase2_input_quality", {})}, 12000)),
+        ("Execution & Revision Summary", compact_json({"status": state.get("scheduler_status", {}), "revision_summary": state.get("revision_summary", {})}, 10000)),
         ("CEO Board Recommendation", str(state.get("final_board_report", ""))),
     ]
 
@@ -166,13 +172,12 @@ def run_board_meeting(brief: dict[str, Any]) -> dict[str, Any]:
         state = initialize_state(brief)
         state["pipeline_errors"] = [{"stage": "board_graph", "message": str(exc)}]
         runtime = assess_run(cast(dict[str, Any], state))
-    phase2 = state.get("phase2_calculations", {})
     return {
         "status": runtime["status"], "success": runtime["success"], "final_report": state.get("final_board_report", ""),
         "notion_board_url": state.get("notion_board_url", ""), "pdf_path": state.get("pdf_path", ""),
         "revision_summary": state.get("revision_summary", {}), "consistency_status": state.get("consistency_status", "NOT_RUN"),
         "deterministic_contradictions": state.get("deterministic_contradictions", []), "contradiction_adjudication": state.get("contradiction_adjudication", {}),
-        "formal_snapshot": state.get("formal_snapshot", {}), "phase2_calculations": phase2, "phase2_input_quality": state.get("phase2_input_quality", {}),
+        "formal_snapshot": state.get("formal_snapshot", {}), "phase2_calculations": state.get("phase2_calculations", {}), "phase2_input_quality": state.get("phase2_input_quality", {}),
         "provenance_ledger": state.get("provenance_ledger", {}), "provenance_validation": state.get("provenance_validation", {}), "provenance_summary": state.get("provenance_summary", {}),
         "scheduler_status": state.get("scheduler_status", {}), "scheduler_events": state.get("scheduler_events", []),
         "errors": runtime["errors"], "warnings": runtime["warnings"],
