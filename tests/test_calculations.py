@@ -75,7 +75,7 @@ def test_workforce_model_applies_start_dates_and_ramp() -> None:
         "workload_hours_per_customer": 10,
         "required_monthly_customers": 15,
     })
-    assert result["annual_payroll"] == 2400.0
+    assert result["annual_payroll_run_rate"] == 2400.0
     assert result["months"][0]["headcount"] == 0.0
     assert result["months"][1]["capacity_hours"] == 100.0
     assert result["months"][2]["capacity_hours"] == 200.0
