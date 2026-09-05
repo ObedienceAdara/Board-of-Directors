@@ -10,7 +10,7 @@ from langgraph.graph import END, START, StateGraph
 
 from agents import ceo_adjudicate_contradictions, ceo_assemble_report, ceo_assign_tasks, ceo_evaluate_agent, panel_reaction, run_department
 from analysis import compact_json, consistency_bundle
-from models import BoardState
+from models import BoardState, build_provenance_ledger, validate_provenance_ledger
 from orchestration import AGENT_ORDER, DynamicReadinessScheduler
 from reports import build_executive_report
 from tools import create_notion_board, create_notion_page, generate_pdf
@@ -50,6 +50,7 @@ def initialize_state(brief: dict[str, Any]) -> BoardState:
         "scheduler_status": {}, "scheduler_events": [], "revision_summary": {},
         "formal_snapshot": {}, "deterministic_contradictions": [],
         "contradiction_adjudication": {}, "consistency_status": "NOT_RUN",
+        "provenance_ledger": {}, "provenance_validation": {}, "provenance_summary": {},
         "final_board_report": "", "notion_board_url": "", "pdf_path": "",
         "pipeline_errors": [], "output_errors": [],
     })
@@ -81,6 +82,16 @@ def _deterministic_consistency(state: BoardState) -> dict[str, Any]:
     return {"formal_snapshot": snapshot, "deterministic_contradictions": snapshot.get("cross_domain_contradictions", [])}
 
 
+def _build_provenance(state: BoardState) -> dict[str, Any]:
+    ledger = build_provenance_ledger(cast(dict[str, Any], state))
+    validation = validate_provenance_ledger(ledger)
+    return {
+        "provenance_ledger": ledger,
+        "provenance_validation": validation,
+        "provenance_summary": ledger.get("summary", {}),
+    }
+
+
 def run_full_pipeline(state: BoardState) -> BoardState:
     stages: list[tuple[str, Callable[[BoardState], Mapping[str, Any]]]] = [
         ("panel", lambda current: run_panel(current)),
@@ -89,6 +100,7 @@ def run_full_pipeline(state: BoardState) -> BoardState:
         ("deterministic_consistency", _deterministic_consistency),
         ("contradiction_adjudication", ceo_adjudicate_contradictions),
         ("ceo_synthesis", ceo_assemble_report),
+        ("provenance", _build_provenance),
     ]
     for stage, fn in stages:
         state = _run_stage(state, stage, fn)
@@ -109,6 +121,8 @@ def _notion_sections(state: BoardState) -> list[tuple[str, str]]:
         ("Product Roadmap", str(state.get("product_roadmap", ""))),
         ("Formal Consistency Snapshot", compact_json(state.get("formal_snapshot", {}), 18000)),
         ("Contradiction Adjudication", compact_json(state.get("contradiction_adjudication", {}), 12000)),
+        ("Evidence & Provenance Ledger", compact_json(state.get("provenance_ledger", {}), 26000)),
+        ("Provenance Validation", compact_json(state.get("provenance_validation", {}), 6000)),
         ("Execution & Revision Summary", compact_json({"status": state.get("scheduler_status", {}), "revision_summary": state.get("revision_summary", {})}, 10000)),
         ("CEO Board Recommendation", str(state.get("final_board_report", ""))),
     ]
@@ -170,6 +184,9 @@ def run_board_meeting(brief: dict[str, Any]) -> dict[str, Any]:
         "deterministic_contradictions": state.get("deterministic_contradictions", []),
         "contradiction_adjudication": state.get("contradiction_adjudication", {}),
         "formal_snapshot": state.get("formal_snapshot", {}),
+        "provenance_ledger": state.get("provenance_ledger", {}),
+        "provenance_validation": state.get("provenance_validation", {}),
+        "provenance_summary": state.get("provenance_summary", {}),
         "scheduler_status": state.get("scheduler_status", {}), "scheduler_events": state.get("scheduler_events", []),
         "errors": runtime["errors"], "warnings": runtime["warnings"],
     }
