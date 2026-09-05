@@ -55,6 +55,14 @@ class BoardState(TypedDict, total=False):
     head_of_sales_validation: dict[str, Any]
     pm_validation: dict[str, Any]
 
+    researcher_retrieval_trace: list[dict[str, Any]]
+    cfo_retrieval_trace: list[dict[str, Any]]
+    cto_retrieval_trace: list[dict[str, Any]]
+    cmo_retrieval_trace: list[dict[str, Any]]
+    coo_retrieval_trace: list[dict[str, Any]]
+    head_of_sales_retrieval_trace: list[dict[str, Any]]
+    pm_retrieval_trace: list[dict[str, Any]]
+
     researcher_revisions: int
     researcher_passed: bool
     researcher_feedback: str
