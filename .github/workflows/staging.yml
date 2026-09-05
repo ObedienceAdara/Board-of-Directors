@@ -1,10 +1,16 @@
 name: Staging Integration
+
 on:
   push:
     branches:
       - main
       - phase0-runtime-verification
   workflow_dispatch:
+
+concurrency:
+  group: staging-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   staging:
     name: Real Groq + Tavily + Notion + PDF board run
@@ -16,18 +22,41 @@ jobs:
       NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
       NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
       RATE_LIMIT_PER_MINUTE: "30"
+
     steps:
       - name: Clone repository
         run: git clone --depth 1 --branch "$GITHUB_REF_NAME" "https://github.com/$GITHUB_REPOSITORY.git" .
+
       - name: Python version
         run: python3 --version
+
       - name: Install dependencies
         run: python3 -m pip install -r requirements.txt -r requirements-dev.txt
-      - name: Validate staging secrets exist
+
+      - name: Check staging configuration
+        id: staging_config
+        shell: bash
         run: |
-          test -n "$GROQ_API_KEY"
-          test -n "$TAVILY_API_KEY"
-          test -n "$NOTION_API_KEY"
-          test -n "$NOTION_DATABASE_ID"
+          missing=()
+          [[ -n "${GROQ_API_KEY:-}" ]] || missing+=(GROQ_API_KEY)
+          [[ -n "${TAVILY_API_KEY:-}" ]] || missing+=(TAVILY_API_KEY)
+          [[ -n "${NOTION_API_KEY:-}" ]] || missing+=(NOTION_API_KEY)
+          [[ -n "${NOTION_DATABASE_ID:-}" ]] || missing+=(NOTION_DATABASE_ID)
+
+          if (( ${#missing[@]} > 0 )); then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Credentialed staging was not run because required GitHub Actions secret(s) are not configured: ${missing[*]}"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "Staging credentials are configured; proceeding with the real integration test."
+          fi
+
       - name: Run credentialed integration test
+        if: steps.staging_config.outputs.configured == 'true'
         run: python3 -m pytest -q tests/test_staging_integration.py -m staging
+
+      - name: Report unconfigured staging
+        if: steps.staging_config.outputs.configured != 'true'
+        run: |
+          echo "Staging Integration is not configured in this repository."
+          echo "Add GROQ_API_KEY, TAVILY_API_KEY, NOTION_API_KEY, and NOTION_DATABASE_ID as GitHub Actions secrets to enable the real test."
