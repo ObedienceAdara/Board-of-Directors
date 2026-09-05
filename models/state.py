@@ -113,6 +113,10 @@ class BoardState(TypedDict, total=False):
     deterministic_contradictions: list[dict[str, Any]]
     contradiction_adjudication: dict[str, Any]
     consistency_status: str
+
+    phase2_calculations: dict[str, Any]
+    phase2_input_quality: dict[str, Any]
+
     provenance_ledger: dict[str, Any]
     provenance_validation: dict[str, Any]
     provenance_summary: dict[str, Any]
