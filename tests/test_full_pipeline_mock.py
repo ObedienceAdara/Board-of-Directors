@@ -86,4 +86,7 @@ def test_run_board_meeting_mocked_full_pipeline(monkeypatch, tmp_path):
     assert result["errors"] == []
     assert result["provenance_validation"]["valid"] is True
     assert result["provenance_ledger"]["schema_version"] == "1.0"
+    assert result["provenance_ledger"]["calculation_lineage"]
+    assert "finance.12_month_revenue" in {item["calculation_id"] for item in result["provenance_ledger"]["calculation_lineage"]}
+    assert result["phase2_calculations"]["model_version"] == "phase2-v1"
     assert any(item["decision_id"] == "board.recommendation" for item in result["provenance_ledger"]["decisions"])
