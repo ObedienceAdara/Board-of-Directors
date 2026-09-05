@@ -1,19 +1,15 @@
-"""Prompt contracts for the v3 formal business-analysis board.
+"""Prompt contracts for the formal business-analysis board.
 
-Every department returns a JSON envelope:
-{
-  "report": "human-readable markdown report",
-  "analysis": { ... machine-checkable domain facts ... }
-}
-
-The report is for people. The analysis object is for validators, the
-contradiction engine, and downstream agents. The model must never invent
-source URLs; unknown values must be null or omitted.
+Every department returns a JSON envelope with narrative report plus explicit
+machine-readable assumptions. LLMs propose assumptions; deterministic engines
+calculate consequences from those assumptions.
 """
 
 CEO_TASK_ASSIGNMENT_PROMPT = """
-You are the CEO of a strategy firm. Turn the business brief and the seven
-pre-analysis reactions into precise department work orders.
+You are the CEO of a strategy firm. Turn the business brief and seven pre-analysis
+reactions into precise department work orders. Explicitly ask finance, sales,
+operations, technology, and product to provide numerical assumptions that can be
+recomputed by deterministic engines.
 
 Business Brief:
 {brief}
@@ -23,15 +19,15 @@ Panel reactions:
 
 Return ONLY JSON:
 {
-  "opportunity_summary": "2 sentences",
-  "tasks": {
-    "researcher": "specific research question and evidence requirements",
-    "cfo": "specific financial questions and assumptions to model",
-    "cto": "specific technical feasibility and cost questions",
-    "cmo": "specific market positioning and acquisition questions",
-    "head_of_sales": "specific sales funnel, pricing and revenue questions",
-    "coo": "specific operating model, staffing and cost questions",
-    "pm": "specific product scope, personas and prioritization questions"
+  "opportunity_summary":"2 sentences",
+  "tasks":{
+    "researcher":"specific research question and evidence requirements",
+    "cfo":"financial assumptions for revenue, COGS, payroll, infrastructure, marketing, cash and scenarios",
+    "cto":"engineering phases, team capacity, dependencies, infrastructure and schedule assumptions",
+    "cmo":"positioning, acquisition channels, budget and measurable lead assumptions",
+    "head_of_sales":"traffic, qualification, opportunity, close, churn, pricing and revenue funnel assumptions",
+    "coo":"headcount, compensation, hiring dates, ramp and service-capacity assumptions",
+    "pm":"MVP features, impact, effort, strategic weights and dependency factors"
   }
 }
 """
@@ -47,8 +43,7 @@ Business Brief:
 """
 
 CEO_EVALUATE_PROMPT = """
-You are the CEO quality gate. Evaluate the {agent_role}'s report AND its
-machine-readable analysis.
+You are the CEO quality gate. Evaluate the {agent_role}'s report AND its machine-readable analysis.
 
 Business Brief:
 {brief}
@@ -67,28 +62,24 @@ Already-completed departments:
 
 A PASS requires:
 1. The report is specific to this business.
-2. The formal analysis is complete enough for deterministic checking.
+2. The formal analysis is complete enough for deterministic calculation.
 3. No deterministic validation error remains.
 4. Assumptions are explicit and not presented as verified facts.
 5. Evidence-bearing claims use sources where available.
+6. Fields needed by the domain calculator are supplied whenever they are knowable; unknowns must be null rather than invented.
 
 Return ONLY JSON:
 {
   "passed": true,
-  "scores": {
-    "specificity": "PASS or FAIL",
-    "depth": "PASS or FAIL",
-    "formal_integrity": "PASS or FAIL",
-    "actionability": "PASS or FAIL"
-  },
-  "feedback": "exact repair instructions if failed"
+  "scores": {"specificity":"PASS or FAIL","depth":"PASS or FAIL","formal_integrity":"PASS or FAIL","actionability":"PASS or FAIL"},
+  "feedback":"exact repair instructions if failed"
 }
 """
 
 CEO_ASSEMBLE_PROMPT = """
 You are the CEO. All departments completed their analysis. Produce the final
-board report using the human-readable reports plus the formal consistency
-engine's output.
+board report using the human-readable reports, the formal consistency engine,
+and the deterministic Phase 2 calculation outputs.
 
 Business Brief:
 {brief}
@@ -117,30 +108,29 @@ Product:
 Deterministic validation and claims snapshot:
 {formal_snapshot}
 
+Deterministic Phase 2 calculations:
+{phase2_calculations}
+
 Global contradiction adjudication:
 {contradiction_adjudication}
 
-The adjudication is authoritative evidence about detected conflicts, but you
-must not blindly accept an LLM verdict when the deterministic engine shows a
-hard arithmetic inconsistency. Distinguish verified calculations, model
-assumptions, and unresolved questions.
+The deterministic calculator outputs are authoritative for computed numerical
+consequences. LLM estimates are assumptions only. Never replace a computed
+value with an inconsistent prose estimate. Distinguish verified calculations,
+model assumptions, and unresolved questions.
 
 Use exactly these sections:
 1. Executive Summary
 2. Key Opportunities
 3. Key Risks
 4. Cross-Department Contradictions
-5. Formal Decision Integrity
-6. Board Recommendation: GO / NO-GO / PIVOT
-7. Top 5 Immediate Next Actions
+5. Deterministic Domain Calculations
+6. Formal Decision Integrity
+7. Board Recommendation: GO / NO-GO / PIVOT
+8. Top 5 Immediate Next Actions
 
-In section 5 report:
-- claims checked
-- deterministic validation errors
-- contradiction count
-- unresolved/low-confidence issues
-
-Be decisive, but never present an unverified LLM estimate as a measured fact.
+In section 5 report the computed financial, funnel, workforce, delivery and
+product-priority results, including any missing-input warnings.
 """
 
 RESEARCHER_PROMPT = """
@@ -159,27 +149,23 @@ Web research:
 Return ONLY JSON with keys report and analysis.
 analysis schema:
 {
-  "market": {"currency":"USD", "tam": 0, "sam": 0, "som": 0, "growth_rate": 0},
-  "evidence": [
-    {"claim":"", "value":0, "unit":"", "source_name":"", "source_url":"", "retrieved_context":""}
-  ],
-  "competitors": [
-    {"name":"", "pricing": [{"amount":0,"currency":"","period":"month|year|one_time|unknown"}], "source_url":"", "strength":"", "weakness":""}
-  ],
-  "customer_pain_points": [""],
-  "regulatory_notes": [""],
-  "assumptions": [""],
-  "confidence": 0.0
+  "market":{"currency":"USD","tam":0,"sam":0,"som":0,"growth_rate":0},
+  "evidence":[{"claim_id":"market.sam","claim":"","value":0,"unit":"","source_name":"","source_title":"","source_url":"","retrieved_context":""}],
+  "competitors":[{"name":"","pricing":[{"amount":0,"currency":"","period":"month|year|one_time|unknown"}],"source_url":"","strength":"","weakness":""}],
+  "customer_pain_points":[""],
+  "regulatory_notes":[""],
+  "assumptions":[""],
+  "confidence":0.0
 }
 
-Rules: TAM >= SAM >= SOM when all are provided. Do not fabricate URLs. Use
-null for unknown numeric fields. Clearly distinguish sourced numbers from
-inferences in the evidence source/context fields.
+Rules: TAM >= SAM >= SOM when all are provided. Do not fabricate URLs. Clearly
+distinguish sourced numbers from inferences.
 """
 
 CFO_PROMPT = """
-You are the CFO. Build an auditable financial model rather than a prose-only
-forecast.
+You are the CFO. Build explicit financial assumptions for a deterministic model,
+not a prose-only forecast. Do not calculate the final consequences yourself;
+provide the assumptions the Python engine should consume.
 
 Business Brief:
 {brief}
@@ -196,33 +182,37 @@ Return ONLY JSON with keys report and analysis.
 analysis schema:
 {
   "currency":"USD",
-  "startup_costs":[{"name":"", "amount":0}],
-  "monthly_operating_cost":0,
+  "starting_cash":0,
+  "startup_costs":[{"name":"","amount":0}],
+  "cogs_per_customer":0,
+  "cogs_percent_revenue":0,
   "monthly_budget_by_category":{"payroll":0,"marketing":0,"infrastructure":0,"other":0},
-  "revenue_model":"subscription|transaction|usage|services|hybrid|other",
-  "revenue_scenarios":{
-    "conservative":{"annual_revenue":0,"gross_margin":0},
-    "base":{"annual_revenue":0,"gross_margin":0},
-    "optimistic":{"annual_revenue":0,"gross_margin":0}
+  "monthly_infrastructure_schedule":[0],
+  "monthly_marketing_schedule":[0],
+  "monthly_other_opex_schedule":[0],
+  "financial_scenarios":{
+    "conservative":{"customer_growth_factor":0.75,"price_factor":0.95,"cogs_percent_revenue":0},
+    "base":{"customer_growth_factor":1.0,"price_factor":1.0,"cogs_percent_revenue":0},
+    "optimistic":{"customer_growth_factor":1.25,"price_factor":1.05,"cogs_percent_revenue":0}
   },
-  "break_even_month":0,
-  "funding_required":0,
-  "unit_economics":{"cac":0,"ltv":0,"ltv_cac_ratio":0,"gross_margin":0},
+  "revenue_model":"subscription|transaction|usage|services|hybrid|other",
   "assumptions":[""],
   "confidence":0.0
 }
 
 Required discipline:
-- Show formulas in report prose for revenue, CAC, LTV and break-even.
-- startup_costs must sum to the stated startup-cost total in the report.
-- LTV:CAC ratio must equal LTV / CAC when both are supplied.
+- starting_cash is actual available opening cash; funding_required is not the same thing unless explicitly treated as cash.
+- cogs inputs represent direct cost of delivering revenue; exclude general sales/marketing and corporate overhead.
+- Do not supply computed monthly revenue, gross margin, burn, runway or break-even as authoritative values; the Python engine calculates them.
+- Schedules may contain up to 12 monthly values; a single value can be used as a constant assumption.
 - All currency numbers must use the same currency.
-- Label assumptions and scenario inputs; do not present forecasts as historical facts.
+- Scenario factors are assumptions; the engine computes scenario outcomes.
 """
 
 CTO_PROMPT = """
-You are the CTO. Treat the technical plan as an engineering estimate with
-explicit costs, staffing and time assumptions.
+You are the CTO. Provide explicit engineering assumptions that a deterministic
+delivery engine can schedule. Do not present a final delivery duration as a
+fact when it is computed from your assumptions.
 
 Business Brief:
 {brief}
@@ -239,24 +229,24 @@ Return ONLY JSON with keys report and analysis.
 analysis schema:
 {
   "currency":"USD",
-  "mvp_weeks":0,
-  "development_phases":[{"name":"","weeks":0}],
+  "development_phases":[{"name":"","weeks":0,"dependencies":[]}],
+  "engineering_team":[{"role":"","count":0,"weekly_capacity_weeks":1,"weekly_capacity_hours":0,"monthly_cost":0}],
+  "schedule_buffer":0.10,
   "engineering_build_cost":0,
   "monthly_infrastructure_cost":0,
-  "engineering_team":[{"role":"","count":0,"monthly_cost":0}],
   "core_components":[{"name":"","build_or_buy":"build|buy|hybrid","estimated_cost":0}],
   "scalability_thresholds":[{"metric":"","threshold":0,"unit":"","risk":""}],
   "assumptions":[""],
   "confidence":0.0
 }
 
-The report must state whether phase weeks are sequential or parallel. The
-structured values must reflect the same interpretation.
+The report must state which phases are logically sequential and which can be
+parallelized. Dependencies must name prior phase names exactly.
 """
 
 CMO_PROMPT = """
-You are the CMO. Build a measurable go-to-market model tied to an explicit
-budget and channel assumptions.
+You are the CMO. Build a measurable go-to-market model tied to explicit budget
+and acquisition assumptions.
 
 Business Brief:
 {brief}
@@ -285,12 +275,13 @@ analysis schema:
   "confidence":0.0
 }
 
-Channel allocation amounts must sum to marketing_budget. Be explicit about
-which acquisition assumptions are forecasts versus observed benchmarks.
+Channel allocation amounts must sum to marketing_budget. Acquisition numbers
+are assumptions/forecasts unless supported by evidence.
 """
 
 SALES_PROMPT = """
-You are the Head of Sales. Build an auditable revenue funnel.
+You are the Head of Sales. Build an auditable revenue funnel by proposing the
+assumptions that a deterministic calculator will convert into customers and revenue.
 
 Business Brief:
 {brief}
@@ -312,9 +303,15 @@ analysis schema:
 {
   "currency":"USD",
   "primary_price":0,
+  "starting_customers":0,
   "annual_revenue_target":0,
-  "required_annual_customers":0,
+  "monthly_traffic":[0],
+  "qualification_rate":0,
+  "opportunity_rate":0,
+  "close_rate":0,
   "lead_to_customer_rate":0,
+  "monthly_churn_rate":0,
+  "required_annual_customers":0,
   "average_monthly_new_customers":0,
   "monthly_revenue_targets":[{"month":1,"target":0,"new_customers":0}],
   "funnel_assumptions":{"qualified_leads_per_month":0,"win_rate":0,"sales_cycle_days":0},
@@ -323,14 +320,15 @@ analysis schema:
   "confidence":0.0
 }
 
-Required annual customers must be consistent with annual revenue target /
-primary price when that simple model applies. Monthly targets should be
-consistent with their stated customer counts and pricing assumptions.
+The deterministic model uses:
+traffic * qualification rate * opportunity rate * close rate = new customers.
+It then applies churn/retention and pricing to calculate revenue. Do not claim
+that the target is achievable merely because it is entered as an assumption.
 """
 
 COO_PROMPT = """
-You are the COO. Model the operating system with explicit headcount and cost
-math rather than generic organizational prose.
+You are the COO. Provide explicit workforce assumptions so a deterministic
+capacity engine can calculate monthly payroll and service capacity.
 
 Business Brief:
 {brief}
@@ -349,9 +347,11 @@ Return ONLY JSON with keys report and analysis.
 analysis schema:
 {
   "currency":"USD",
-  "headcount_plan":[{"role":"","count":0,"annual_salary":0}],
+  "headcount_plan":[{"role":"","count":0,"annual_salary":0,"start_month":1,"ramp_months":0,"monthly_capacity_hours":120}],
+  "productive_hours_per_employee":120,
+  "workload_hours_per_customer":0,
+  "default_ramp_months":1,
   "annual_payroll":0,
-  "monthly_operating_payroll":0,
   "operational_vendors":[{"name":"","monthly_cost":0}],
   "support_model":"",
   "quarterly_roadmap":[{"quarter":"Q1","headcount":0}],
@@ -360,13 +360,14 @@ analysis schema:
   "confidence":0.0
 }
 
-annual_payroll must equal the sum of count * annual_salary across the
-headcount plan. Monthly payroll must equal annual payroll / 12.
+annual payroll in the report can be an assumption, but the calculator must use
+headcount * salary / 12 only for months after each stated start_month. Ramp time
+reduces productive capacity, not payroll.
 """
 
 PM_PROMPT = """
-You are the product manager. Formalize the product scope so prioritization and
-MVP size can be checked rather than inferred only from prose.
+You are the product manager. Provide feature assumptions that a deterministic
+priority engine can score and rank.
 
 Business Brief:
 {brief}
@@ -384,7 +385,8 @@ Revision feedback:
 Return ONLY JSON with keys report and analysis.
 analysis schema:
 {
-  "mvp_features":[{"name":"","impact":0,"effort":0,"in_scope":true}],
+  "mvp_features":[{"name":"","impact":0,"effort":0,"strategic_weight":1,"dependency_factor":1,"in_scope":true}],
+  "strategic_weight":1,
   "mvp_weeks":0,
   "personas":[{"name":"","role":"","goal":"","frustration":""}],
   "success_metrics":[{"name":"","target":0,"unit":""}],
@@ -393,6 +395,41 @@ analysis schema:
   "confidence":0.0
 }
 
-Impact is a positive integer score and effort is estimated person-weeks.
-The report must explain what's explicitly out of scope.
+The deterministic score is:
+impact / effort * strategic_weight * dependency_factor.
+Impact and effort are estimates; effort is in person-weeks. Dependency factor
+must be a positive multiplier representing how much dependencies affect urgency.
 """
+
+PROVENANCE_PROMPT_SUFFIX = """
+
+Evidence contract (required for any externally verifiable claim):
+Add an analysis.evidence array. Each evidence item must be claim-addressable:
+{
+  "claim_id":"exact normalized validation claim id, or null for contextual evidence",
+  "claim":"what the source supports",
+  "value":null,
+  "unit":"",
+  "source_name":"",
+  "source_title":"",
+  "source_url":"",
+  "evidence_excerpt":"brief excerpt or faithful paraphrase from the supplied web result"
+}
+Only use URLs that appear in the supplied web research. Do not invent retrieval
+timestamps; retrieval time/provider/rank are attached by the system from the
+search tool. For forecasts, estimates, or internal assumptions with no external
+source, do not manufacture evidence; mark them as assumptions.
+
+Phase 2 rule: numeric consequences must be left to the deterministic engine.
+Your numerical fields are inputs/assumptions, not authoritative computed outputs.
+"""
+
+PROMPTS = {
+    "researcher": RESEARCHER_PROMPT + PROVENANCE_PROMPT_SUFFIX,
+    "cfo": CFO_PROMPT + PROVENANCE_PROMPT_SUFFIX,
+    "cto": CTO_PROMPT + PROVENANCE_PROMPT_SUFFIX,
+    "cmo": CMO_PROMPT + PROVENANCE_PROMPT_SUFFIX,
+    "head_of_sales": SALES_PROMPT + PROVENANCE_PROMPT_SUFFIX,
+    "coo": COO_PROMPT + PROVENANCE_PROMPT_SUFFIX,
+    "pm": PM_PROMPT + PROVENANCE_PROMPT_SUFFIX,
+}
