@@ -230,6 +230,8 @@ def adjudicate_contradictions(state: dict[str, Any]) -> dict[str, Any]:
     formal = build_formal_by_agent(state)
     validations = {agent: state.get(VALIDATION_KEYS[agent], {}) for agent in REPORT_KEYS}
     snapshot = consistency_bundle(state["brief"], formal, validations)
+    snapshot["phase2_calculations"] = state.get("phase2_calculations", {})
+    snapshot["phase2_input_quality"] = state.get("phase2_input_quality", {})
     return {"formal_snapshot": snapshot, "deterministic_contradictions": snapshot["cross_domain_contradictions"]}
 
 
@@ -250,6 +252,7 @@ def ceo_assemble_report(state: dict[str, Any]) -> dict[str, Any]:
         "brief": brief_to_str(state["brief"]), "research_report": state.get("research_report", "")[:3500], "financial_plan": state.get("financial_plan", "")[:3500],
         "tech_plan": state.get("tech_plan", "")[:3500], "marketing_plan": state.get("marketing_plan", "")[:3500], "sales_strategy": state.get("sales_strategy", "")[:3500],
         "operations_plan": state.get("operations_plan", "")[:3500], "product_roadmap": state.get("product_roadmap", "")[:3500], "formal_snapshot": compact_json(state.get("formal_snapshot", {}), 11000),
+        "phase2_calculations": compact_json(state.get("phase2_calculations", {}), 16000),
         "contradiction_adjudication": compact_json(state.get("contradiction_adjudication", {}), 9000),
     }, "Final CEO synthesis unavailable. See department reports and consistency snapshot.")
     return {"final_board_report": raw}
