@@ -16,12 +16,6 @@ from .calculations import (
 )
 
 
-def _list_of_numbers(values: Any) -> list[Any]:
-    if not isinstance(values, list):
-        return []
-    return values
-
-
 def run_phase2_calculations(state: dict[str, Any]) -> dict[str, Any]:
     """Run the complete deterministic domain layer from department assumptions."""
     cfo = state.get("cfo_formal", {}) or {}
@@ -30,7 +24,6 @@ def run_phase2_calculations(state: dict[str, Any]) -> dict[str, Any]:
     cto = state.get("cto_formal", {}) or {}
     pm = state.get("pm_formal", {}) or {}
     cmo = state.get("cmo_formal", {}) or {}
-
     sales = sales if isinstance(sales, dict) else {}
     cfo = cfo if isinstance(cfo, dict) else {}
     coo = coo if isinstance(coo, dict) else {}
@@ -38,10 +31,7 @@ def run_phase2_calculations(state: dict[str, Any]) -> dict[str, Any]:
     pm = pm if isinstance(pm, dict) else {}
     cmo = cmo if isinstance(cmo, dict) else {}
 
-    monthly_targets = sales.get("monthly_revenue_targets")
-    target_customers = [item.get("new_customers", 0) for item in _list_of_numbers(monthly_targets) if isinstance(item, dict)]
     traffic = sales.get("monthly_traffic", sales.get("traffic_by_month", []))
-
     sales_model = calculate_sales_funnel({
         "monthly_traffic": traffic,
         "qualification_rate": sales.get("qualification_rate", sales.get("lead_to_qualified_rate", 0)),
@@ -72,7 +62,8 @@ def run_phase2_calculations(state: dict[str, Any]) -> dict[str, Any]:
         "starting_cash": cfo.get("starting_cash", 0),
         "price": sales.get("primary_price", 0),
         "starting_customers": sales.get("starting_customers", 0),
-        "monthly_new_customers": target_customers or [row["new_customers"] for row in sales_model["months"]],
+        # The deterministic funnel, not the LLM's target table, controls customer acquisition.
+        "monthly_new_customers": [row["new_customers"] for row in sales_model["months"]],
         "churn_rate": sales.get("monthly_churn_rate", sales.get("churn_rate", 0)),
         "cogs_per_customer": cfo.get("cogs_per_customer", 0),
         "cogs_percent_revenue": cfo.get("cogs_percent_revenue", 0),
@@ -95,21 +86,17 @@ def run_phase2_calculations(state: dict[str, Any]) -> dict[str, Any]:
         "strategic_weight": pm.get("strategic_weight", 1.0),
     })
 
-    required_inputs = {
-        "finance": ["starting_cash", "primary_price", "monthly_new_customers", "cogs assumptions"],
+    expected = {
+        "finance": ["starting_cash", "primary_price", "cogs assumptions"],
         "sales": ["monthly_traffic", "qualification_rate", "opportunity_rate", "close_rate", "primary_price"],
         "operations": ["headcount_plan", "workload_hours_per_customer"],
         "technical": ["development_phases", "engineering_team"],
         "product": ["mvp_features", "impact", "effort"],
     }
     missing = {
-        "finance": [name for name in required_inputs["finance"] if not _field_present(state, name)],
-        "sales": [name for name in required_inputs["sales"] if not _field_present(state, name)],
-        "operations": [name for name in required_inputs["operations"] if not _field_present(state, name)],
-        "technical": [name for name in required_inputs["technical"] if not _field_present(state, name)],
-        "product": [name for name in required_inputs["product"] if not _field_present(state, name)],
+        domain: [name for name in names if not _field_present(state, name)]
+        for domain, names in expected.items()
     }
-
     return {
         "model_version": "phase2-v1",
         "finance": finance,
@@ -123,21 +110,30 @@ def run_phase2_calculations(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _field_present(state: dict[str, Any], name: str) -> bool:
+    cfo = state.get("cfo_formal", {})
+    sales = state.get("head_of_sales_formal", {})
+    coo = state.get("coo_formal", {})
+    cto = state.get("cto_formal", {})
+    pm = state.get("pm_formal", {})
+    cfo = cfo if isinstance(cfo, dict) else {}
+    sales = sales if isinstance(sales, dict) else {}
+    coo = coo if isinstance(coo, dict) else {}
+    cto = cto if isinstance(cto, dict) else {}
+    pm = pm if isinstance(pm, dict) else {}
     mapping = {
-        "starting_cash": isinstance(state.get("cfo_formal"), dict) and state["cfo_formal"].get("starting_cash") is not None,
-        "primary_price": isinstance(state.get("head_of_sales_formal"), dict) and state["head_of_sales_formal"].get("primary_price") is not None,
-        "monthly_new_customers": isinstance(state.get("head_of_sales_formal"), dict) and bool(state["head_of_sales_formal"].get("monthly_revenue_targets")),
-        "cogs assumptions": isinstance(state.get("cfo_formal"), dict) and (state["cfo_formal"].get("cogs_per_customer") is not None or state["cfo_formal"].get("cogs_percent_revenue") is not None),
-        "monthly_traffic": isinstance(state.get("head_of_sales_formal"), dict) and bool(state["head_of_sales_formal"].get("monthly_traffic", state["head_of_sales_formal"].get("traffic_by_month", []))),
-        "qualification_rate": isinstance(state.get("head_of_sales_formal"), dict) and state["head_of_sales_formal"].get("qualification_rate") is not None,
-        "opportunity_rate": isinstance(state.get("head_of_sales_formal"), dict) and state["head_of_sales_formal"].get("opportunity_rate") is not None,
-        "close_rate": isinstance(state.get("head_of_sales_formal"), dict) and (state["head_of_sales_formal"].get("close_rate") is not None or state["head_of_sales_formal"].get("lead_to_customer_rate") is not None),
-        "headcount_plan": isinstance(state.get("coo_formal"), dict) and bool(state["coo_formal"].get("headcount_plan")),
-        "workload_hours_per_customer": isinstance(state.get("coo_formal"), dict) and state["coo_formal"].get("workload_hours_per_customer") is not None,
-        "development_phases": isinstance(state.get("cto_formal"), dict) and bool(state["cto_formal"].get("development_phases")),
-        "engineering_team": isinstance(state.get("cto_formal"), dict) and bool(state["cto_formal"].get("engineering_team")),
-        "mvp_features": isinstance(state.get("pm_formal"), dict) and bool(state["pm_formal"].get("mvp_features")),
-        "impact": True,
-        "effort": True,
+        "starting_cash": cfo.get("starting_cash") is not None,
+        "primary_price": sales.get("primary_price") is not None,
+        "cogs assumptions": cfo.get("cogs_per_customer") is not None or cfo.get("cogs_percent_revenue") is not None,
+        "monthly_traffic": bool(sales.get("monthly_traffic", sales.get("traffic_by_month", []))),
+        "qualification_rate": sales.get("qualification_rate") is not None,
+        "opportunity_rate": sales.get("opportunity_rate") is not None,
+        "close_rate": sales.get("close_rate") is not None or sales.get("lead_to_customer_rate") is not None,
+        "headcount_plan": bool(coo.get("headcount_plan")),
+        "workload_hours_per_customer": coo.get("workload_hours_per_customer") is not None,
+        "development_phases": bool(cto.get("development_phases")),
+        "engineering_team": bool(cto.get("engineering_team")),
+        "mvp_features": bool(pm.get("mvp_features")),
+        "impact": any(isinstance(feature, dict) and feature.get("impact") is not None for feature in pm.get("mvp_features", [])) if isinstance(pm.get("mvp_features", []), list) else False,
+        "effort": any(isinstance(feature, dict) and feature.get("effort") is not None for feature in pm.get("mvp_features", [])) if isinstance(pm.get("mvp_features", []), list) else False,
     }
     return mapping.get(name, True)
