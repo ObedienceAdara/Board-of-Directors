@@ -11,6 +11,7 @@ import requests
 NOTION_API_BASE = "https://api.notion.com/v1"
 NOTION_API_KEY = os.getenv("NOTION_API_KEY", "")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "")
+NOTION_ENABLED = os.getenv("NOTION_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _headers() -> dict[str, str]:
@@ -22,7 +23,7 @@ def _headers() -> dict[str, str]:
 
 
 def create_notion_board(title: str) -> str:
-    if not NOTION_API_KEY or not NOTION_DATABASE_ID:
+    if not NOTION_ENABLED or not NOTION_API_KEY or not NOTION_DATABASE_ID:
         return ""
     payload: dict[str, Any] = {
         "parent": {"database_id": NOTION_DATABASE_ID},
@@ -40,7 +41,7 @@ def create_notion_board(title: str) -> str:
 
 
 def create_notion_page(parent_id: str, title: str, content: str) -> str:
-    if not parent_id:
+    if not NOTION_ENABLED or not parent_id:
         return ""
     chunks = [content[i : i + 1900] for i in range(0, len(content), 1900)] or [""]
     blocks = [
