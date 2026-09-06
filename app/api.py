@@ -7,6 +7,12 @@ import time
 from collections import defaultdict
 from typing import Any
 
+from utils.config import load_environment
+
+# Load .env before importing the pipeline because downstream modules read
+# configuration at import time (LLM models, API security, Notion, etc.).
+load_environment()
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from langchain_core.runnables import RunnableLambda
