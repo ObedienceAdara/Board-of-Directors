@@ -167,7 +167,10 @@ def node_output(state: BoardState) -> BoardState:
             child_urls = [create_notion_page(notion_id, title, content) for title, content in sections]
             state["notion_board_url"] = next((url for url in child_urls if url), f"https://notion.so/{notion_id.replace('-', '')}")
         else:
-            state.setdefault("output_errors", []).append({"stage": "notion", "message": "Notion credentials/configuration unavailable."})
+            # Notion is an optional output integration for local runs. Missing
+            # credentials must not turn an otherwise valid board execution into
+            # a hard runtime error. Configured Notion failures still surface.
+            print("Notion output skipped: NOTION_API_KEY/NOTION_DATABASE_ID not configured.")
     except Exception as exc:
         state.setdefault("output_errors", []).append({"stage": "notion", "message": str(exc)})
     try:
