@@ -20,15 +20,17 @@ from prompts import (
 )
 from tools import multi_search_with_provenance
 
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
+GROQ_MODEL = os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL)
 MODELS = {
-    "ceo": os.getenv("CEO_MODEL", "llama-3.3-70b-versatile"),
-    "researcher": os.getenv("RESEARCHER_MODEL", "llama-3.3-70b-versatile"),
-    "cfo": os.getenv("CFO_MODEL", "llama-3.3-70b-versatile"),
-    "cto": os.getenv("CTO_MODEL", "llama-3.3-70b-versatile"),
-    "cmo": os.getenv("CMO_MODEL", "llama-3.3-70b-versatile"),
-    "head_of_sales": os.getenv("SALES_MODEL", "llama-3.3-70b-versatile"),
-    "coo": os.getenv("COO_MODEL", "llama-3.3-70b-versatile"),
-    "pm": os.getenv("PM_MODEL", "llama-3.3-70b-versatile"),
+    "ceo": os.getenv("CEO_MODEL", GROQ_MODEL),
+    "researcher": os.getenv("RESEARCHER_MODEL", GROQ_MODEL),
+    "cfo": os.getenv("CFO_MODEL", GROQ_MODEL),
+    "cto": os.getenv("CTO_MODEL", GROQ_MODEL),
+    "cmo": os.getenv("CMO_MODEL", GROQ_MODEL),
+    "head_of_sales": os.getenv("SALES_MODEL", GROQ_MODEL),
+    "coo": os.getenv("COO_MODEL", GROQ_MODEL),
+    "pm": os.getenv("PM_MODEL", GROQ_MODEL),
 }
 ROLES = {"researcher": "Researcher", "cfo": "CFO", "cto": "CTO", "cmo": "CMO", "head_of_sales": "Head of Sales", "coo": "COO", "pm": "PM"}
 REPORT_KEYS = {"researcher": "research_report", "cfo": "financial_plan", "cto": "tech_plan", "cmo": "marketing_plan", "head_of_sales": "sales_strategy", "coo": "operations_plan", "pm": "product_roadmap"}
@@ -236,7 +238,24 @@ def adjudicate_contradictions(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def ceo_adjudicate_contradictions(state: dict[str, Any]) -> dict[str, Any]:
-    prompt = ChatPromptTemplate.from_template("""You are a senior adjudicator. Deterministic software has already identified possible business contradictions.\n\nBusiness brief:\n{brief}\n\nConsistency snapshot:\n{snapshot}\n\nFor every contradiction, decide whether it is a TRUE_CONTRADICTION, ACCEPTABLE_DIFFERENCE, or INSUFFICIENT_EVIDENCE. Never override an arithmetic validation error as if it were correct. For true contradictions, give a precise resolution and name the source assumptions that must change.\n\nReturn ONLY JSON:\n{\n  \"overall_status\": \"CONSISTENT|INCONSISTENT|INSUFFICIENT_EVIDENCE\",\n  \"issues\": [\n    {\"id\": \"CD-001\", \"verdict\": \"TRUE_CONTRADICTION|ACCEPTABLE_DIFFERENCE|INSUFFICIENT_EVIDENCE\", \"resolution\": \"...\", \"rationale\": \"...\", \"confidence\": 0.0, \"affected_agents\": [\"cfo\"]}\n  ],\n  \"unresolved_questions\": [\"...\"]\n}""")
+    prompt = ChatPromptTemplate.from_template("""You are a senior adjudicator. Deterministic software has already identified possible business contradictions.
+
+Business brief:
+{brief}
+
+Consistency snapshot:
+{snapshot}
+
+For every contradiction, decide whether it is a TRUE_CONTRADICTION, ACCEPTABLE_DIFFERENCE, or INSUFFICIENT_EVIDENCE. Never override an arithmetic validation error as if it were correct. For true contradictions, give a precise resolution and name the source assumptions that must change.
+
+Return ONLY JSON:
+{{
+  \"overall_status\": \"CONSISTENT|INCONSISTENT|INSUFFICIENT_EVIDENCE\",
+  \"issues\": [
+    {{\"id\": \"CD-001\", \"verdict\": \"TRUE_CONTRADICTION|ACCEPTABLE_DIFFERENCE|INSUFFICIENT_EVIDENCE\", \"resolution\": \"...\", \"rationale\": \"...\", \"confidence\": 0.0, \"affected_agents\": [\"cfo\"]}}
+  ],
+  \"unresolved_questions\": [\"...\"]
+}}""")
     chain = prompt | make_llm(MODELS["ceo"]) | StrOutputParser()
     fallback = json.dumps({"overall_status": "INSUFFICIENT_EVIDENCE", "issues": [], "unresolved_questions": ["Adjudication unavailable."]})
     raw = safe_invoke(chain, {"brief": brief_to_str(state["brief"]), "snapshot": compact_json(state.get("formal_snapshot", {}), 14000)}, fallback)
