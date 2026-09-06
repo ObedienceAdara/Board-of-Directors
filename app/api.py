@@ -7,18 +7,14 @@ import time
 from collections import defaultdict
 from typing import Any
 
-from utils.config import load_environment
-
-# Load .env before importing the pipeline because downstream modules read
-# configuration at import time (LLM models, API security, Notion, etc.).
-load_environment()
-
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from langchain_core.runnables import RunnableLambda
 from langserve import add_routes
 
-from .pipeline import run_board_meeting
+from utils.config import load_environment
+
+load_environment()
 
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
 RATE_LIMIT = max(1, int(os.getenv("RATE_LIMIT_PER_MINUTE", "10")))
@@ -49,6 +45,8 @@ async def security_middleware(request: Request, call_next):
 
 
 def _invoke_board(inputs: dict[str, Any]) -> dict[str, Any]:
+    from .pipeline import run_board_meeting
+
     return run_board_meeting(inputs["brief"])
 
 
