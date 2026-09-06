@@ -21,21 +21,37 @@ from prompts import (
 from tools import multi_search_with_provenance
 
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
-GROQ_MODEL = os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL)
+GROQ_MODEL = os.getenv("GROQ_MODEL") or DEFAULT_GROQ_MODEL
 MODELS = {
-    "ceo": os.getenv("CEO_MODEL", GROQ_MODEL),
-    "researcher": os.getenv("RESEARCHER_MODEL", GROQ_MODEL),
-    "cfo": os.getenv("CFO_MODEL", GROQ_MODEL),
-    "cto": os.getenv("CTO_MODEL", GROQ_MODEL),
-    "cmo": os.getenv("CMO_MODEL", GROQ_MODEL),
-    "head_of_sales": os.getenv("SALES_MODEL", GROQ_MODEL),
-    "coo": os.getenv("COO_MODEL", GROQ_MODEL),
-    "pm": os.getenv("PM_MODEL", GROQ_MODEL),
+    "ceo": os.getenv("CEO_MODEL") or GROQ_MODEL,
+    "researcher": os.getenv("RESEARCHER_MODEL") or GROQ_MODEL,
+    "cfo": os.getenv("CFO_MODEL") or GROQ_MODEL,
+    "cto": os.getenv("CTO_MODEL") or GROQ_MODEL,
+    "cmo": os.getenv("CMO_MODEL") or GROQ_MODEL,
+    "head_of_sales": os.getenv("SALES_MODEL") or GROQ_MODEL,
+    "coo": os.getenv("COO_MODEL") or GROQ_MODEL,
+    "pm": os.getenv("PM_MODEL") or GROQ_MODEL,
 }
 ROLES = {"researcher": "Researcher", "cfo": "CFO", "cto": "CTO", "cmo": "CMO", "head_of_sales": "Head of Sales", "coo": "COO", "pm": "PM"}
 REPORT_KEYS = {"researcher": "research_report", "cfo": "financial_plan", "cto": "tech_plan", "cmo": "marketing_plan", "head_of_sales": "sales_strategy", "coo": "operations_plan", "pm": "product_roadmap"}
 FORMAL_KEYS = {agent: f"{agent}_formal" for agent in REPORT_KEYS}
 VALIDATION_KEYS = {agent: f"{agent}_validation" for agent in REPORT_KEYS}
+
+
+def template_from_prompt(template: str) -> ChatPromptTemplate:
+    """Create an f-string prompt template while preserving literal JSON braces."""
+    placeholders: list[str] = []
+
+    def protect(match: re.Match[str]) -> str:
+        placeholders.append(match.group(0))
+        return f"\x00{len(placeholders) - 1}\x00"
+
+    protected = re.sub(r"\{[A-Za-z_][A-Za-z0-9_]*\}", protect, template)
+    escaped = protected.replace("{", "{{").replace("}", "}}")
+    for index, placeholder in enumerate(placeholders):
+        escaped = escaped.replace(f"\x00{index}\x00", placeholder)
+    return ChatPromptTemplate.from_template(escaped)
+
 
 PROVENANCE_PROMPT_SUFFIX = """
 
@@ -145,7 +161,7 @@ def multi_search(queries: list[str]) -> str:
 
 
 def get_search_queries(brief: str, task: str, model: str) -> list[str]:
-    prompt = ChatPromptTemplate.from_template("Generate exactly 3 high-value search queries for this business analysis. Return only a JSON list of strings.\n\nBusiness:\n{brief}\nTask:\n{task}")
+    prompt = template_from_prompt("Generate exactly 3 high-value search queries for this business analysis. Return only a JSON list of strings.\n\nBusiness:\n{brief}\nTask:\n{task}")
     raw = safe_invoke(prompt | make_llm(model) | StrOutputParser(), {"brief": brief[:800], "task": task[:600]}, "[]")
     try:
         parsed = json.loads(clean_json(raw))
@@ -164,13 +180,13 @@ def format_panel_reactions(state: dict[str, Any]) -> str:
 
 
 def panel_reaction(state: dict[str, Any], agent: str, role: str) -> dict[str, Any]:
-    result = safe_invoke(ChatPromptTemplate.from_template(PANEL_REACTION_PROMPT) | make_llm(MODELS[agent]) | StrOutputParser(), {"agent_role": role, "brief": brief_to_str(state["brief"])}, f"{role} reaction unavailable.")
+    result = safe_invoke(template_from_prompt(PANEL_REACTION_PROMPT) | make_llm(MODELS[agent]) | StrOutputParser(), {"agent_role": role, "brief": brief_to_str(state["brief"])}, f"{role} reaction unavailable.")
     return {f"{agent}_panel": result}
 
 
 def ceo_assign_tasks(state: dict[str, Any]) -> dict[str, Any]:
     fallback = json.dumps({"opportunity_summary": "Task assignment unavailable.", "tasks": {a: "Perform formal analysis." for a in ROLES}})
-    result = safe_invoke(ChatPromptTemplate.from_template(CEO_TASK_ASSIGNMENT_PROMPT) | make_llm(MODELS["ceo"]) | StrOutputParser(), {"brief": brief_to_str(state["brief"]), "panel_reactions": format_panel_reactions(state)}, fallback)
+    result = safe_invoke(template_from_prompt(CEO_TASK_ASSIGNMENT_PROMPT) | make_llm(MODELS["ceo"]) | StrOutputParser(), {"brief": brief_to_str(state["brief"]), "panel_reactions": format_panel_reactions(state)}, fallback)
     return {"ceo_task_assignments": clean_json(result)}
 
 
@@ -189,7 +205,7 @@ def _department_inputs(agent: str, state: dict[str, Any]) -> dict[str, Any]:
 def run_department(agent: str, state: dict[str, Any]) -> dict[str, Any]:
     role = ROLES[agent]
     print(f"\n{role} — formal analysis...")
-    chain = ChatPromptTemplate.from_template(PROMPTS[agent]) | make_llm(MODELS[agent]) | StrOutputParser()
+    chain = template_from_prompt(PROMPTS[agent]) | make_llm(MODELS[agent]) | StrOutputParser()
     fallback = json.dumps({"report": f"{role} analysis unavailable due to a temporary AI service error.", "analysis": {}})
     inputs = _department_inputs(agent, state)
     raw = safe_invoke(chain, inputs, fallback)
@@ -209,7 +225,7 @@ def ceo_evaluate_agent(agent: str, state: dict[str, Any]) -> dict[str, Any]:
     report_key, formal_key, validation_key = REPORT_KEYS[agent], FORMAL_KEYS[agent], VALIDATION_KEYS[agent]
     validation = state.get(validation_key, {})
     fallback = json.dumps({"passed": not bool(validation.get("errors")), "scores": {}, "feedback": ""})
-    raw = safe_invoke(ChatPromptTemplate.from_template(CEO_EVALUATE_PROMPT) | make_llm(MODELS["ceo"]) | StrOutputParser(), {
+    raw = safe_invoke(template_from_prompt(CEO_EVALUATE_PROMPT) | make_llm(MODELS["ceo"]) | StrOutputParser(), {
         "agent_role": ROLES[agent], "brief": brief_to_str(state["brief"]), "output": state.get(report_key, "")[:5000],
         "formal_analysis": compact_json(state.get(formal_key, {}), 9000), "validation": compact_json(validation, 6000), "other_departments": other_departments_context(state, agent)[:5000],
     }, fallback)
@@ -238,7 +254,7 @@ def adjudicate_contradictions(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def ceo_adjudicate_contradictions(state: dict[str, Any]) -> dict[str, Any]:
-    prompt = ChatPromptTemplate.from_template("""You are a senior adjudicator. Deterministic software has already identified possible business contradictions.
+    prompt = template_from_prompt("""You are a senior adjudicator. Deterministic software has already identified possible business contradictions.
 
 Business brief:
 {brief}
@@ -249,13 +265,13 @@ Consistency snapshot:
 For every contradiction, decide whether it is a TRUE_CONTRADICTION, ACCEPTABLE_DIFFERENCE, or INSUFFICIENT_EVIDENCE. Never override an arithmetic validation error as if it were correct. For true contradictions, give a precise resolution and name the source assumptions that must change.
 
 Return ONLY JSON:
-{{
+{
   \"overall_status\": \"CONSISTENT|INCONSISTENT|INSUFFICIENT_EVIDENCE\",
   \"issues\": [
-    {{\"id\": \"CD-001\", \"verdict\": \"TRUE_CONTRADICTION|ACCEPTABLE_DIFFERENCE|INSUFFICIENT_EVIDENCE\", \"resolution\": \"...\", \"rationale\": \"...\", \"confidence\": 0.0, \"affected_agents\": [\"cfo\"]}}
+    {\"id\": \"CD-001\", \"verdict\": \"TRUE_CONTRADICTION|ACCEPTABLE_DIFFERENCE|INSUFFICIENT_EVIDENCE\", \"resolution\": \"...\", \"rationale\": \"...\", \"confidence\": 0.0, \"affected_agents\": [\"cfo\"]}
   ],
   \"unresolved_questions\": [\"...\"]
-}}""")
+}""")
     chain = prompt | make_llm(MODELS["ceo"]) | StrOutputParser()
     fallback = json.dumps({"overall_status": "INSUFFICIENT_EVIDENCE", "issues": [], "unresolved_questions": ["Adjudication unavailable."]})
     raw = safe_invoke(chain, {"brief": brief_to_str(state["brief"]), "snapshot": compact_json(state.get("formal_snapshot", {}), 14000)}, fallback)
@@ -267,7 +283,7 @@ Return ONLY JSON:
 
 
 def ceo_assemble_report(state: dict[str, Any]) -> dict[str, Any]:
-    raw = safe_invoke(ChatPromptTemplate.from_template(CEO_ASSEMBLE_PROMPT) | make_llm(MODELS["ceo"]) | StrOutputParser(), {
+    raw = safe_invoke(template_from_prompt(CEO_ASSEMBLE_PROMPT) | make_llm(MODELS["ceo"]) | StrOutputParser(), {
         "brief": brief_to_str(state["brief"]), "research_report": state.get("research_report", "")[:3500], "financial_plan": state.get("financial_plan", "")[:3500],
         "tech_plan": state.get("tech_plan", "")[:3500], "marketing_plan": state.get("marketing_plan", "")[:3500], "sales_strategy": state.get("sales_strategy", "")[:3500],
         "operations_plan": state.get("operations_plan", "")[:3500], "product_roadmap": state.get("product_roadmap", "")[:3500], "formal_snapshot": compact_json(state.get("formal_snapshot", {}), 11000),
