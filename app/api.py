@@ -5,19 +5,21 @@ from __future__ import annotations
 import os
 import time
 from collections import defaultdict
-from typing import Any
+from typing import Any, Awaitable, Callable
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from langchain_core.runnables import RunnableLambda
 from langserve import add_routes
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.pipeline import run_board_meeting
 from utils.config import load_environment
 
 load_environment()
 
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "").strip()
-APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+APP_ENV = os.getenv("APP_ENV", "production").strip().lower()
 RATE_LIMIT = max(1, int(os.getenv("RATE_LIMIT_PER_MINUTE", "10")))
 MAX_REQUEST_BYTES = max(1024, int(os.getenv("MAX_REQUEST_BYTES", "65536")))
 AUTH_REQUIRED = APP_ENV not in {"development", "test"}
@@ -36,50 +38,58 @@ class BoardMeetingRequest(BaseModel):
         unknown = set(value) - allowed
         if unknown:
             raise ValueError(f"Unknown brief fields: {sorted(unknown)}")
+        lengths = {"idea": 500, "target_market": 300, "budget": 100, "founder_background": 300, "timeline": 100, "constraints": 300}
         idea = str(value.get("idea", "")).strip()
         if not idea:
             raise ValueError("brief.idea is required")
-        if len(idea) > 500:
-            raise ValueError("brief.idea cannot exceed 500 characters")
+        for key, limit in lengths.items():
+            if len(str(value.get(key, ""))) > limit:
+                raise ValueError(f"brief.{key} cannot exceed {limit} characters")
         return value
 
 
-app = FastAPI(title="Plex Hedge — Board of Directors AI", description="Formal multi-agent business analysis with deterministic validation, global contradiction adjudication and dynamic scheduling", version="3.0.0")
+app = FastAPI(
+    title="Plex Hedge — Board of Directors AI",
+    description="Formal multi-agent business analysis with deterministic validation, global contradiction adjudication and dynamic scheduling",
+    version="3.0.0",
+)
 
 
 @app.middleware("http")
-async def security_middleware(request, call_next):
+async def security_middleware(request: Request, call_next: Callable[[Request], Awaitable[Any]]) -> Any:
     if request.url.path in EXEMPT_PATHS:
         return await call_next(request)
-    if request.method == "POST" and request.headers.get("content-length"):
+
+    if request.method == "POST":
         try:
-            if int(request.headers["content-length"]) > MAX_REQUEST_BYTES:
-                from fastapi.responses import JSONResponse
-                return JSONResponse(status_code=413, content={"detail": "Request body too large."})
+            content_length = int(request.headers.get("content-length", "0"))
         except ValueError:
-            from fastapi.responses import JSONResponse
             return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length header."})
+        if content_length > MAX_REQUEST_BYTES:
+            return JSONResponse(status_code=413, content={"detail": "Request body too large."})
+        body = await request.body()
+        if len(body) > MAX_REQUEST_BYTES:
+            return JSONResponse(status_code=413, content={"detail": "Request body too large."})
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.request", "body": body, "more_body": False}
+        request = Request(request.scope, receive)
+
     if not API_SECRET_KEY:
         if AUTH_REQUIRED:
-            from fastapi.responses import JSONResponse
             return JSONResponse(status_code=503, content={"detail": "API_SECRET_KEY is not configured for this environment."})
     elif request.headers.get("X-API-Key", "") != API_SECRET_KEY:
-        from fastapi.responses import JSONResponse
         return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key."})
+
     client_ip = request.client.host if request.client else "unknown"
     now = time.monotonic()
     cutoff = now - 60
     history = [stamp for stamp in _request_log[client_ip] if stamp > cutoff]
     if len(history) >= RATE_LIMIT:
-        from fastapi.responses import JSONResponse
         _request_log[client_ip] = history
         return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded."})
     history.append(now)
     _request_log[client_ip] = history
     return await call_next(request)
-
-
-from .pipeline import run_board_meeting
 
 
 def _invoke_board(inputs: dict[str, Any]) -> dict[str, Any]:
