@@ -193,29 +193,12 @@ class CompanyState(BaseModel):
     def to_dict(self) -> dict[str, Any]:
         return self.model_dump(mode="json")
 
-    def record_change(
-        self,
-        section: str,
-        field: str,
-        value: Any,
-        *,
-        source: str,
-        method: str,
-        provenance_ref: str | None = None,
-    ) -> StateChange:
+    def record_change(self, section: str, field: str, value: Any, *, source: str, method: str, provenance_ref: str | None = None) -> StateChange:
         if source not in {"brief", "deterministic", "agent", "external", "system"}:
             raise ValueError(f"Unsupported state-change source: {source}")
         self.revision += 1
         self.updated_at = utc_now()
-        change = StateChange(
-            revision=self.revision,
-            section=section,
-            field=field,
-            value=value,
-            source=source,
-            method=method,
-            provenance_ref=provenance_ref,
-        )
+        change = StateChange(revision=self.revision, section=section, field=field, value=value, source=source, method=method, provenance_ref=provenance_ref)
         self.memory.recent_state_changes.append(change)
         self.memory.recent_state_changes = self.memory.recent_state_changes[-100:]
         return change
@@ -223,32 +206,20 @@ class CompanyState(BaseModel):
 
 def company_state_from_brief(brief: dict[str, Any]) -> CompanyState:
     """Create a conservative world state from a user business brief."""
-    identity = CompanyIdentity(
-        name=str(brief.get("company_name") or brief.get("idea") or ""),
-        description=str(brief.get("idea") or ""),
-        target_market=str(brief.get("target_market") or ""),
-        currency=str(brief.get("currency") or "USD")[:3].upper(),
-    )
-    strategy = StrategyState(
-        thesis=str(brief.get("idea") or ""),
-        strategic_assumptions=[str(brief.get("constraints"))] if str(brief.get("constraints") or "").strip() else [],
-    )
+    identity = CompanyIdentity(name=str(brief.get("company_name") or brief.get("idea") or ""), description=str(brief.get("idea") or ""), target_market=str(brief.get("target_market") or ""), currency=str(brief.get("currency") or "USD")[:3].upper())
+    strategy = StrategyState(thesis=str(brief.get("idea") or ""), strategic_assumptions=[str(brief.get("constraints"))] if str(brief.get("constraints") or "").strip() else [])
     return CompanyState(identity=identity, strategy=strategy)
 
 
 def synchronize_deterministic_results(company: CompanyState, calculations: dict[str, Any]) -> CompanyState:
-    """Apply validated deterministic calculator outputs to canonical state.
-
-    Only deterministic outputs are promoted to authoritative quantitative state.
-    LLM narratives remain transient board artifacts until independently validated.
-    """
+    """Apply validated deterministic calculator outputs to canonical state."""
     currency = company.identity.currency or "USD"
     finance = calculations.get("finance", {})
     if isinstance(finance, dict) and finance:
-        company.finance.cash_balance = Money(amount=max(float(finance.get("ending_cash", 0.0)), 0.0), currency=currency)
+        company.finance.cash_balance = Money(amount=float(finance.get("ending_cash", 0.0)), currency=currency)
         company.finance.monthly_revenue = Money(amount=float(finance.get("monthly_revenue", 0.0)), currency=currency)
         company.finance.monthly_operating_costs = Money(amount=float(finance.get("monthly_costs", 0.0)), currency=currency)
-        company.finance.monthly_net_burn = Money(amount=max(float(finance.get("net_burn", 0.0)), 0.0), currency=currency)
+        company.finance.monthly_net_burn = Money(amount=float(finance.get("net_burn", 0.0)), currency=currency)
         company.finance.gross_margin = float(finance.get("gross_margin", 0.0))
         company.finance.contribution_margin = Money(amount=float(finance.get("contribution_margin", 0.0)), currency=currency)
         company.finance.runway_months = finance.get("runway_months")
@@ -270,17 +241,14 @@ def synchronize_deterministic_results(company: CompanyState, calculations: dict[
             company.sales.annual_revenue_target = Money(amount=max(float(target), 0.0), currency=currency)
         if gap is not None:
             company.sales.target_gap = Money(amount=float(gap), currency=currency)
-        company.sales.pipeline_summary = {
-            "ending_customers": sales.get("ending_customers"),
-            "required_annual_sales": sales.get("required_annual_sales"),
-            "implied_monthly_traffic_for_target": sales.get("implied_monthly_traffic_for_target"),
-        }
+        company.sales.pipeline_summary = {"ending_customers": sales.get("ending_customers"), "required_annual_sales": sales.get("required_annual_sales"), "implied_monthly_traffic_for_target": sales.get("implied_monthly_traffic_for_target")}
         months = sales.get("months")
         if isinstance(months, list) and months:
             first = months[0]
             if isinstance(first, dict):
                 company.sales.monthly_traffic = first.get("traffic")
-            company.customers.active_count = float(months[-1].get("ending_customers", 0.0)) if isinstance(months[-1], dict) else 0.0
+            last = months[-1]
+            company.customers.active_count = float(last.get("ending_customers", 0.0)) if isinstance(last, dict) else 0.0
             company.customers.acquired_this_period = sum(float(row.get("new_customers", 0.0)) for row in months if isinstance(row, dict))
             company.customers.churned_this_period = sum(float(row.get("churned_customers", 0.0)) for row in months if isinstance(row, dict))
             company.customers.count_as_of = utc_now()
