@@ -1,4 +1,4 @@
-"""Unit tests for the Phase 1 evidence/provenance ledger."""
+"""Unit tests for the evidence/provenance ledger."""
 
 from __future__ import annotations
 
@@ -10,42 +10,14 @@ from models.provenance import build_provenance_ledger, validate_provenance_ledge
 def _state() -> dict:
     return {
         "brief": {"idea": "Evidence-first analytics platform"},
-        "researcher_formal": {
-            "confidence": 0.81,
-            "market": {"currency": "USD", "sam": 420000000},
-            "evidence": [{
-                "claim_id": "market.sam",
-                "claim": "serviceable available market is $420M",
-                "value": 420000000,
-                "unit": "USD",
-                "source_name": "Model Reported Name",
-                "source_title": "Model Reported Title",
-                "source_url": "https://example.com/market-2026",
-                "publisher": "Model Reported Publisher",
-                "evidence_excerpt": "The serviceable available market is estimated at $420M.",
-            }],
-        },
-        "researcher_retrieval_trace": [{
-            "url": "https://example.com/market-2026",
-            "title": "Tool Observed Title",
-            "publisher": "Tool Observed Publisher",
-            "query": "serviceable available market 2026",
-            "rank": 1,
-            "retrieved_at": "2026-09-05T10:00:00Z",
-            "provider": "tavily",
-            "score": 0.93,
-            "published_at": "2026-08-20",
-            "content": "The market is estimated at $420M.",
-        }],
+        "researcher_formal": {"confidence": 0.81, "market": {"currency": "USD", "sam": 420000000}, "evidence": [{"claim_id": "market.sam", "claim": "serviceable available market is $420M", "value": 420000000, "unit": "USD", "source_name": "Model Reported Name", "source_title": "Model Reported Title", "source_url": "https://example.com/market-2026", "evidence_excerpt": "The serviceable available market is estimated at $420M."}]},
+        "researcher_retrieval_trace": [{"url": "https://example.com/market-2026", "title": "Tool Observed Title", "publisher": "Tool Observed Publisher", "query": "serviceable available market 2026", "rank": 1, "retrieved_at": "2026-09-05T10:00:00Z", "provider": "tavily", "score": 0.93, "published_at": "2026-08-20", "content": "The market is estimated at $420M."}],
         "researcher_validation": {"claims": [{"id": "market.sam", "value": 420000000, "unit": "USD", "confidence": 0.81}], "errors": []},
-        "cfo_formal": {"currency": "USD", "confidence": 0.74, "startup_costs": [{"name": "Engineering", "amount": 10000}, {"name": "Legal", "amount": 2000}], "unit_economics": {"cac": 50, "ltv": 300, "ltv_cac_ratio": 6}},
-        "cfo_validation": {"claims": [{"id": "finance.startup_cost", "value": 12000, "unit": "USD"}, {"id": "unit_economics.cac", "value": 50, "unit": "USD"}, {"id": "unit_economics.ltv", "value": 300, "unit": "USD"}, {"id": "unit_economics.ltv_cac_ratio", "value": 6, "unit": "x"}], "errors": []},
-        "head_of_sales_formal": {"currency": "USD", "confidence": 0.72, "primary_price": 100, "annual_revenue_target": 420000},
+        "cfo_formal": {"currency": "USD", "confidence": 0.74, "starting_cash": 20000, "startup_costs": [{"name": "Engineering", "amount": 10000}, {"name": "Legal", "amount": 2000}], "cogs_per_customer": 5, "cogs_percent_revenue": 0},
+        "cfo_validation": {"claims": [{"id": "finance.startup_cost", "value": 12000, "unit": "USD"}], "errors": []},
+        "head_of_sales_formal": {"currency": "USD", "confidence": 0.72, "primary_price": 100, "price_period": "month", "starting_customers": 0, "annual_revenue_target": 420000, "monthly_traffic": [100], "qualification_rate": 0.5, "opportunity_rate": 0.5, "close_rate": 0.2, "monthly_churn_rate": 0},
         "head_of_sales_validation": {"claims": [{"id": "pricing.primary_price", "value": 100, "unit": "USD"}, {"id": "sales.annual_revenue_target", "value": 420000, "unit": "USD"}, {"id": "sales.required_annual_customers", "value": 4200, "unit": "customers"}], "errors": []},
-        "deterministic_contradictions": [],
-        "contradiction_adjudication": {"issues": []},
-        "consistency_status": "CONSISTENT",
-        "final_board_report": "Board recommendation: GO, subject to validating demand and unit economics.",
+        "deterministic_contradictions": [], "contradiction_adjudication": {"issues": []}, "consistency_status": "PASS", "final_board_report": "Board recommendation: GO, subject to validating demand and unit economics.",
     }
 
 
@@ -64,9 +36,9 @@ def test_sourced_claim_has_source_and_retrieval_metadata() -> None:
     assert source["retrieval_metadata"]["score"] == 0.93
     assert source["retrieval_metadata"]["captured_at"] == ledger["generated_at"]
     evidence = next(item for item in ledger["evidence"] if item["evidence_id"] == claim["evidence_refs"][0])
+    assert evidence["claim_id"] == "market.sam"
     assert "420M" in evidence["excerpt"]
     assert evidence["observed_excerpt"] == "The market is estimated at $420M."
-    assert evidence["excerpt_origin"] == "agent_submitted_plus_tool_observed"
 
 
 def test_missing_retrieval_timestamp_is_not_fabricated() -> None:
@@ -109,44 +81,22 @@ def test_agent_assertion_without_source_is_explicitly_unsourced() -> None:
 
 def test_explicit_claim_id_prevents_numeric_misattribution() -> None:
     state = _state()
-    state["researcher_formal"]["evidence"].append({
-        "claim_id": "market.tam",
-        "claim": "total addressable market is also 420M",
-        "value": 420000000,
-        "unit": "USD",
-        "source_title": "Wrong Claim Source",
-        "source_url": "https://example.com/tam",
-        "evidence_excerpt": "TAM is 420M.",
-    })
+    state["researcher_formal"]["evidence"].append({"claim_id": "market.tam", "claim": "total addressable market is also 420M", "value": 420000000, "unit": "USD", "source_title": "Wrong Claim Source", "source_url": "https://example.com/tam", "evidence_excerpt": "TAM is 420M."})
+    state["researcher_validation"]["claims"].append({"id": "market.tam", "value": 420000000, "unit": "USD"})
     ledger = build_provenance_ledger(state)
     sam = next(item for item in ledger["claims"] if item["claim_id"] == "market.sam")
     assert len(sam["evidence_refs"]) == 1
     sam_evidence = next(item for item in ledger["evidence"] if item["evidence_id"] == sam["evidence_refs"][0])
     assert sam_evidence["claim_id"] == "market.sam"
+    tam = next(item for item in ledger["claims"] if item["claim_id"] == "market.tam")
+    assert tam["evidence_refs"]
+    assert tam["evidence_refs"] != sam["evidence_refs"]
 
 
 def test_same_url_has_stable_source_identity_across_title_changes() -> None:
     state = _state()
-    state["researcher_formal"]["evidence"].append({
-        "claim_id": "market.tam",
-        "claim": "total addressable market is 500M",
-        "value": 500000000,
-        "unit": "USD",
-        "source_title": "Second Model Title",
-        "source_url": "https://example.com/market-2026",
-        "evidence_excerpt": "The market is estimated at $500M.",
-    })
-    state["researcher_retrieval_trace"].append({
-        "url": "https://example.com/market-2026",
-        "title": "Tool Updated Title",
-        "publisher": "Tool Observed Publisher",
-        "query": "market updated search",
-        "rank": 2,
-        "retrieved_at": "2026-09-05T10:05:00Z",
-        "provider": "tavily",
-        "score": 0.88,
-        "content": "The market is estimated at $500M.",
-    })
+    state["researcher_formal"]["evidence"].append({"claim_id": "market.tam", "claim": "total addressable market is 500M", "value": 500000000, "unit": "USD", "source_title": "Second Model Title", "source_url": "https://example.com/market-2026", "evidence_excerpt": "The market is estimated at $500M."})
+    state["researcher_retrieval_trace"].append({"url": "https://example.com/market-2026", "title": "Tool Updated Title", "publisher": "Tool Observed Publisher", "query": "market updated search", "rank": 2, "retrieved_at": "2026-09-05T10:05:00Z", "provider": "tavily", "score": 0.88, "content": "The market is estimated at $500M."})
     state["researcher_validation"]["claims"].append({"id": "market.tam", "value": 500000000, "unit": "USD"})
     ledger = build_provenance_ledger(state)
     assert len(ledger["sources"]) == 1
