@@ -11,15 +11,39 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from langchain_core.runnables import RunnableLambda
 from langserve import add_routes
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from utils.config import load_environment
 
 load_environment()
 
-API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
+API_SECRET_KEY = os.getenv("API_SECRET_KEY", "").strip()
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
 RATE_LIMIT = max(1, int(os.getenv("RATE_LIMIT_PER_MINUTE", "10")))
+MAX_REQUEST_BYTES = max(1024, int(os.getenv("MAX_REQUEST_BYTES", "65536")))
+AUTH_REQUIRED = APP_ENV not in {"development", "test"}
 EXEMPT_PATHS = {"/", "/docs", "/openapi.json", "/redoc"}
 _request_log: dict[str, list[float]] = defaultdict(list)
+
+
+class BoardMeetingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    brief: dict[str, Any] = Field(min_length=1)
+
+    @field_validator("brief")
+    @classmethod
+    def validate_brief(cls, value: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"idea", "target_market", "budget", "founder_background", "timeline", "constraints"}
+        unknown = set(value) - allowed
+        if unknown:
+            raise ValueError(f"Unknown brief fields: {sorted(unknown)}")
+        idea = str(value.get("idea", "")).strip()
+        if not idea:
+            raise ValueError("brief.idea is required")
+        if len(idea) > 500:
+            raise ValueError("brief.idea cannot exceed 500 characters")
+        return value
+
 
 app = FastAPI(
     title="Plex Hedge — Board of Directors AI",
@@ -32,22 +56,34 @@ app = FastAPI(
 async def security_middleware(request: Request, call_next):
     if request.url.path in EXEMPT_PATHS:
         return await call_next(request)
-    if API_SECRET_KEY and request.headers.get("X-API-Key", "") != API_SECRET_KEY:
+    if request.method == "POST" and request.headers.get("content-length"):
+        try:
+            if int(request.headers["content-length"]) > MAX_REQUEST_BYTES:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large."})
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length header."})
+    if not API_SECRET_KEY:
+        if AUTH_REQUIRED:
+            return JSONResponse(status_code=503, content={"detail": "API_SECRET_KEY is not configured for this environment."})
+    elif request.headers.get("X-API-Key", "") != API_SECRET_KEY:
         return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key."})
+
     client_ip = request.client.host if request.client else "unknown"
-    now = time.time()
+    now = time.monotonic()
     cutoff = now - 60
-    _request_log[client_ip] = [stamp for stamp in _request_log[client_ip] if stamp > cutoff]
-    if len(_request_log[client_ip]) >= RATE_LIMIT:
+    history = [stamp for stamp in _request_log[client_ip] if stamp > cutoff]
+    if len(history) >= RATE_LIMIT:
+        _request_log[client_ip] = history
         return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded."})
-    _request_log[client_ip].append(now)
+    history.append(now)
+    _request_log[client_ip] = history
     return await call_next(request)
 
 
 def _invoke_board(inputs: dict[str, Any]) -> dict[str, Any]:
     from .pipeline import run_board_meeting
-
-    return run_board_meeting(inputs["brief"])
+    request = BoardMeetingRequest.model_validate(inputs)
+    return run_board_meeting(request.brief)
 
 
 board_runnable: RunnableLambda = RunnableLambda(_invoke_board)
@@ -63,4 +99,5 @@ async def root() -> dict[str, Any]:
         "agents": ["CEO", "Researcher", "CFO", "CTO", "CMO", "Head of Sales", "COO", "PM"],
         "docs": "/docs",
         "playground": "/board-meeting/playground",
+        "authentication_required": AUTH_REQUIRED,
     }
