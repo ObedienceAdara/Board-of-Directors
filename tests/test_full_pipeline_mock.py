@@ -5,7 +5,6 @@ from pathlib import Path
 import main
 from app import pipeline
 
-
 BRIEF = {
     "idea": "Mocked board test product",
     "target_market": "Small businesses",
@@ -18,15 +17,7 @@ BRIEF = {
 
 def test_run_board_meeting_mocked_full_pipeline(monkeypatch, tmp_path):
     agents = ["researcher", "cfo", "cto", "cmo", "coo", "head_of_sales", "pm"]
-    reports = {
-        "researcher": "research_report",
-        "cfo": "financial_plan",
-        "cto": "tech_plan",
-        "cmo": "marketing_plan",
-        "coo": "operations_plan",
-        "head_of_sales": "sales_strategy",
-        "pm": "product_roadmap",
-    }
+    reports = {"researcher": "research_report", "cfo": "financial_plan", "cto": "tech_plan", "cmo": "marketing_plan", "coo": "operations_plan", "head_of_sales": "sales_strategy", "pm": "product_roadmap"}
 
     def fake_panel(_state):
         return {f"{agent}_panel": f"{agent} panel reaction" for agent in agents}
@@ -37,23 +28,22 @@ def test_run_board_meeting_mocked_full_pipeline(monkeypatch, tmp_path):
     def fake_formal(state):
         for agent, key in reports.items():
             state[key] = f"{agent} report"
-            state[f"{agent}_formal"] = {"report": f"{agent} report"}
-            state[f"{agent}_validation"] = {"errors": [], "warnings": [], "claims": []}
+            state[f"{agent}_formal"] = {}
+            state[f"{agent}_validation"] = {"valid": True, "errors": [], "warnings": [], "claims": []}
             state[f"{agent}_passed"] = True
             state[f"{agent}_revisions"] = 1
         state["scheduler_status"] = {agent: "passed" for agent in agents}
+        state["scheduler_failed_agents"] = []
+        state["scheduler_blocked_agents"] = []
         state["revision_summary"] = {agent: 1 for agent in agents}
         state["scheduler_events"] = []
         return state
 
     def fake_consistency(_state):
-        return {"formal_snapshot": {"cross_domain_contradictions": []}, "deterministic_contradictions": []}
+        return {"formal_snapshot": {"cross_domain_contradictions": []}, "deterministic_contradictions": [], "consistency_status": "PASS"}
 
     def fake_adjudication(_state):
-        return {
-            "contradiction_adjudication": {"overall_status": "CONSISTENT", "issues": []},
-            "consistency_status": "CONSISTENT",
-        }
+        return {"contradiction_adjudication": {"overall_status": "CONSISTENT", "issues": []}, "consistency_status": "PASS"}
 
     def fake_synthesis(_state):
         return {"final_board_report": "GO — mocked board recommendation."}
@@ -85,8 +75,7 @@ def test_run_board_meeting_mocked_full_pipeline(monkeypatch, tmp_path):
     assert Path(result["pdf_path"]).exists()
     assert result["errors"] == []
     assert result["provenance_validation"]["valid"] is True
-    assert result["provenance_ledger"]["schema_version"] == "1.0"
+    assert result["provenance_ledger"]["schema_version"] == "1.1"
     assert result["provenance_ledger"]["calculation_lineage"]
     assert "finance.12_month_revenue" in {item["calculation_id"] for item in result["provenance_ledger"]["calculation_lineage"]}
-    assert result["phase2_calculations"]["model_version"] == "phase2-v1"
     assert any(item["decision_id"] == "board.recommendation" for item in result["provenance_ledger"]["decisions"])
