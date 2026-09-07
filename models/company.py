@@ -9,7 +9,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from .decisions import DecisionState
-from .entities import Competitor, Customer, Employee, Metric, Money, Project, Risk, StateChange
+from .entities import Competitor, Customer, Employee, Money, Project, Risk, StateChange
 from .events import EventState
 from .objectives import ObjectivesState
 
