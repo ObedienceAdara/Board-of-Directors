@@ -7,8 +7,7 @@ import time
 from collections import defaultdict
 from typing import Any
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from langchain_core.runnables import RunnableLambda
 from langserve import add_routes
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -45,34 +44,34 @@ class BoardMeetingRequest(BaseModel):
         return value
 
 
-app = FastAPI(
-    title="Plex Hedge — Board of Directors AI",
-    description="Formal multi-agent business analysis with deterministic validation, global contradiction adjudication and dynamic scheduling",
-    version="3.0.0",
-)
+app = FastAPI(title="Plex Hedge — Board of Directors AI", description="Formal multi-agent business analysis with deterministic validation, global contradiction adjudication and dynamic scheduling", version="3.0.0")
 
 
 @app.middleware("http")
-async def security_middleware(request: Request, call_next):
+async def security_middleware(request, call_next):
     if request.url.path in EXEMPT_PATHS:
         return await call_next(request)
     if request.method == "POST" and request.headers.get("content-length"):
         try:
             if int(request.headers["content-length"]) > MAX_REQUEST_BYTES:
+                from fastapi.responses import JSONResponse
                 return JSONResponse(status_code=413, content={"detail": "Request body too large."})
         except ValueError:
+            from fastapi.responses import JSONResponse
             return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length header."})
     if not API_SECRET_KEY:
         if AUTH_REQUIRED:
+            from fastapi.responses import JSONResponse
             return JSONResponse(status_code=503, content={"detail": "API_SECRET_KEY is not configured for this environment."})
     elif request.headers.get("X-API-Key", "") != API_SECRET_KEY:
+        from fastapi.responses import JSONResponse
         return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key."})
-
     client_ip = request.client.host if request.client else "unknown"
     now = time.monotonic()
     cutoff = now - 60
     history = [stamp for stamp in _request_log[client_ip] if stamp > cutoff]
     if len(history) >= RATE_LIMIT:
+        from fastapi.responses import JSONResponse
         _request_log[client_ip] = history
         return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded."})
     history.append(now)
@@ -80,8 +79,10 @@ async def security_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+from .pipeline import run_board_meeting
+
+
 def _invoke_board(inputs: dict[str, Any]) -> dict[str, Any]:
-    from .pipeline import run_board_meeting
     request = BoardMeetingRequest.model_validate(inputs)
     return run_board_meeting(request.brief)
 
