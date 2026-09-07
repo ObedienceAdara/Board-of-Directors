@@ -6,12 +6,19 @@ A dependency-aware multi-agent business-analysis system that simulates an execut
 
 Version `1.0.0` freezes the current deliberative architecture as a measurable control system before the project adds autonomous execution.
 
+## Phase 1 — Canonical Company State
+
+Phase 1 introduces `CompanyState` as the single canonical representation of business reality. The board remains a deliberative system: agents read the canonical state, propose assumptions, and receive deterministic consequences; validated deterministic results are the only quantitative outputs promoted back into the world model.
+
 ```text
 Business Brief
+  -> CompanyState initialization
   -> 7-way panel reactions
   -> CEO task allocation
   -> dynamic dependency scheduler
   -> formal department analysis + local deterministic validation + CEO quality gate
+  -> deterministic domain calculations
+  -> CompanyState synchronization
   -> deterministic global consistency pass
   -> LLM contradiction adjudication
   -> CEO final synthesis
@@ -20,55 +27,72 @@ Business Brief
   -> PDF / Notion
 ```
 
-Phase 0 adds a baseline observability envelope to `run_board_meeting(...)` without changing the decision path. The response now includes `baseline_metrics` covering pipeline latency, failure rate, calculation correctness, provenance completeness, contradiction detection, and explicit availability states for decision correctness and LLM cost.
-
-See [`docs/BASELINE.md`](docs/BASELINE.md) for the metric contract and limitations.
-
-## v3 Architecture
-
 The runtime still uses LangGraph as the outer execution envelope. The dynamic scheduler handles dependency-ready departmental work inside that envelope.
 
 ## Package Structure
 
 ```text
-main.py                         # stable CLI/import entrypoint
+main.py
 app/
-  api.py                        # FastAPI + LangServe surface
-  pipeline.py                   # application orchestration + delivery
+  __init__.py
+  api.py
+  pipeline.py
 agents/
-  board.py                      # stable board-agent interface
+  __init__.py
+  board.py
 analysis/
-  formal.py                     # formal-analysis interface
-  consistency.py                # cross-domain consistency interface
-  provenance.py                 # evidence/lineage interface
+  __init__.py
+  calculations.py
+  consistency.py
+  formal.py
+  phase2.py
 orchestration/
-  scheduler.py                  # dynamic-readiness scheduler interface
+  __init__.py
+  scheduler.py
 models/
-  state.py                      # BoardState + BusinessBrief
-  provenance.py                 # provenance ledger builder + validator
+  __init__.py
+  company.py              # canonical CompanyState
+  decisions.py            # persistent decision records
+  entities.py             # customers, employees, projects, risks, etc.
+  events.py               # company observations/events
+  objectives.py           # objectives, KPIs, constraints
+  provenance.py           # provenance ledger builder + validator
+  state.py                # transient BoardState + canonical-state boundary
+  store.py                # versioned persistence protocol + JSON reference store
 reports/
-  executive.py                  # compact strategic report model
+  __init__.py
+  executive.py
 tools/
-  search.py                     # Tavily integration
-  notion.py                     # Notion integration
-  pdf.py                        # ReportLab executive PDF renderer
+  __init__.py
+  search.py
+  notion.py
+  pdf.py
 utils/
-  metrics.py                    # Phase 0 baseline observability
-  runtime.py                    # truthful runtime status
-formal_agents.py                # current v3 agent implementation
-analysis_engine.py              # current deterministic formal engine
-consistency_engine.py           # current deterministic consistency engine
-scheduler.py                    # current scheduler implementation
-prompts.py                      # current prompt library
+  __init__.py
+  metrics.py
+  runtime.py
+formal_agents.py
+analysis_engine.py
+consistency_engine.py
+scheduler.py
+prompts.py
 tests/
-  unit/                         # isolated component tests
-  integration/                  # cross-component contract tests
-  regression/                   # fixed-behavior protections
-  scenarios/                    # deterministic control cases
-  evals/                        # evaluation contracts
+  unit/
+  integration/
+  regression/
+  scenarios/
+  evals/
+docs/
+  ARCHITECTURE.md
+  BASELINE.md
+  COMPANY_STATE.md
 ```
 
-The package boundaries are intentionally explicit before the next deeper architectural phase. Existing root implementations remain compatible while the application imports the new boundaries.
+### Canonical state domains
+
+`CompanyState` contains identity, objectives, strategy, finance, sales, marketing, product, engineering, operations, workforce, customers, projects, competitors, risks, decisions, events, policies, and memory.
+
+See [`docs/COMPANY_STATE.md`](docs/COMPANY_STATE.md) for the authority model, revision semantics, persistence boundary, and agent interaction contract.
 
 ## Department Dependency Graph
 
@@ -114,28 +138,11 @@ The ledger preserves source URL, title, publisher, evidence excerpt and retrieva
 
 ## Executive PDF
 
-The PDF is now an **executive decision document**, not an archive of every department transcript.
-
-It is deliberately bounded to **12 pages**:
-
-1. Cover
-2. Executive Decision Brief
-3. The Opportunity
-4. Financial Case
-5. Technical Feasibility
-6. Go-To-Market
-7. Operating Model
-8. Product & MVP
-9. Risks & Contradictions
-10. First 90 Days
-11. Assumptions & Evidence
-12. Final Board Recommendation
-
-The report layer selectively extracts high-value findings and normalized claims from the full state. Full department analysis remains available in the internal state and Notion output.
+The PDF is an **executive decision document**, not an archive of every department transcript. It is deliberately bounded to **12 pages**.
 
 ## Baseline Metrics
 
-A board run now includes:
+A board run includes:
 
 ```text
 decision_correctness
@@ -151,7 +158,7 @@ Unknown dimensions are represented explicitly rather than fabricated. Decision c
 
 ## Outputs
 
-A run returns the final report, formal integrity information, contradiction candidates and adjudication, scheduler status/events, revision counts, provenance ledger/validation/coverage, baseline metrics, PDF path and optional Notion URL.
+A run returns the final report, canonical `company_state`, formal integrity information, contradiction candidates and adjudication, scheduler status/events, revision counts, provenance ledger/validation/coverage, baseline metrics, PDF path and optional Notion URL.
 
 ## Setup
 
@@ -176,11 +183,12 @@ API docs: `http://localhost:8000/docs`
 pytest tests/ -v
 ```
 
-The suite covers formal validation, contradiction detection, retry/sanitization behavior, dynamic readiness, provenance lineage/integrity, API startup/route registration, mocked full-pipeline execution, deterministic Phase 2 control cases, the workforce-ramp regression contract, baseline metric contracts and the fixed PDF page-count contract.
+The suite covers formal validation, contradiction detection, retry/sanitization behavior, dynamic readiness, provenance lineage/integrity, API startup/route registration, mocked full-pipeline execution, deterministic Phase 2 control cases, workforce-ramp regression, baseline metric contracts, canonical CompanyState invariants, persistence round-trips and the fixed PDF page-count contract.
 
 For a real external integration run, use the credentialed staging workflow in `.github/workflows/staging.yml`.
 
 ## Documentation
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the package responsibilities, provenance chain and report design.
-See [`docs/BASELINE.md`](docs/BASELINE.md) for the Phase 0 reliability and evaluation contract.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for package responsibilities, provenance, and report design.
+See [`docs/BASELINE.md`](docs/BASELINE.md) for Phase 0 reliability and evaluation.
+See [`docs/COMPANY_STATE.md`](docs/COMPANY_STATE.md) for Phase 1 canonical world-state design.
