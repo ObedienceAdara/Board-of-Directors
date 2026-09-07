@@ -17,7 +17,6 @@ from tools import create_notion_board, create_notion_page, generate_pdf
 from utils import assess_run
 
 
-
 def run_panel(state: BoardState) -> dict[str, Any]:
     panel_state = cast(dict[str, Any], state)
     result: dict[str, Any] = {}
@@ -76,8 +75,7 @@ def run_formal_board(state: BoardState) -> BoardState:
 
 def _run_stage(state: BoardState, stage: str, fn: Callable[[BoardState], Mapping[str, Any]]) -> BoardState:
     try:
-        state_update = dict(fn(state))
-        cast(dict[str, Any], state).update(state_update)
+        state.update(dict(fn(state)))
     except Exception as exc:
         state.setdefault("pipeline_errors", []).append({"stage": stage, "message": str(exc)})
     return state
@@ -86,12 +84,7 @@ def _run_stage(state: BoardState, stage: str, fn: Callable[[BoardState], Mapping
 def _formal_stage_ok(state: BoardState) -> bool:
     statuses = state.get("scheduler_status", {}) or {}
     if not isinstance(statuses, dict) or any(statuses.get(agent) != "passed" for agent in AGENT_ORDER):
-        failed = state.get("scheduler_failed_agents", []) or []
-        blocked = state.get("scheduler_blocked_agents", []) or []
-        state.setdefault("pipeline_errors", []).append({
-            "stage": "formal_scheduler",
-            "message": f"Formal board incomplete; failed={failed}, blocked={blocked}.",
-        })
+        state.setdefault("pipeline_errors", []).append({"stage": "formal_scheduler", "message": f"Formal board incomplete; failed={state.get('scheduler_failed_agents', [])}, blocked={state.get('scheduler_blocked_agents', [])}."})
         return False
     return True
 
@@ -114,29 +107,35 @@ def _calculation_lineage(state: BoardState) -> list[dict[str, Any]]:
     calculations = state.get("phase2_calculations", {})
     if not isinstance(calculations, dict):
         return []
+    domains = {name: calculations.get(name, {}) if isinstance(calculations.get(name, {}), dict) else {} for name in ("finance", "sales", "operations", "technical", "product")}
+    values: dict[str, Any] = {
+        "finance.12_month_revenue": domains["finance"].get("12_month_revenue"),
+        "finance.gross_margin": domains["finance"].get("gross_margin"),
+        "finance.contribution_margin": domains["finance"].get("contribution_margin"),
+        "finance.net_burn": domains["finance"].get("net_burn"),
+        "finance.runway_months": domains["finance"].get("runway_months"),
+        "finance.break_even_month": domains["finance"].get("break_even_month"),
+        "sales.12_month_revenue": domains["sales"].get("12_month_revenue"),
+        "sales.required_annual_sales": domains["sales"].get("required_annual_sales"),
+        "operations.12_month_payroll": domains["operations"].get("12_month_payroll"),
+        "technical.delivery_duration_weeks": domains["technical"].get("delivery_duration_weeks"),
+        "product.priority_scores": [item.get("priority_score") for item in domains["product"].get("features", []) if isinstance(item, dict)],
+    }
+    formulas = {
+        "finance.12_month_revenue": "sum(finance.months[*].revenue)", "finance.gross_margin": "(revenue-cogs)/revenue", "finance.contribution_margin": "revenue-cogs-marketing",
+        "finance.net_burn": "operating_costs-revenue", "finance.runway_months": "cash-depletion simulation", "finance.break_even_month": "first forecast month with net_burn <= 0",
+        "sales.12_month_revenue": "sum(sales.months[*].revenue)", "sales.required_annual_sales": "annual_revenue_target / annual revenue per sale",
+        "operations.12_month_payroll": "sum(monthly payroll after hire dates)", "technical.delivery_duration_weeks": "dependency-constrained list schedule with shared capacity",
+        "product.priority_scores": "impact/effort*strategic_weight*dependency_factor",
+    }
+    domains_for_calc = {"finance": domains["finance"], "sales": domains["sales"], "operations": domains["operations"], "technical": domains["technical"], "product": domains["product"]}
     rows: list[dict[str, Any]] = []
-    mappings = [
-        ("finance.12_month_revenue", "finance", "finance.get('12_month_revenue')", "sum(finance.months[*].revenue)", ["head_of_sales_formal", "cfo_formal"]),
-        ("finance.gross_margin", "finance", "finance.get('gross_margin')", "(revenue-cogs)/revenue", ["head_of_sales_formal", "cfo_formal"]),
-        ("finance.contribution_margin", "finance", "finance.get('contribution_margin')", "revenue-cogs-marketing", ["head_of_sales_formal", "cfo_formal", "cmo_formal"]),
-        ("finance.net_burn", "finance", "finance.get('net_burn')", "operating_costs-revenue", ["head_of_sales_formal", "cfo_formal", "coo_formal", "cto_formal", "cmo_formal"]),
-        ("finance.runway_months", "finance", "finance.get('runway_months')", "cash-depletion simulation", ["cfo_formal", "head_of_sales_formal", "coo_formal"]),
-        ("finance.break_even_month", "finance", "finance.get('break_even_month')", "first forecast month with net_burn <= 0", ["head_of_sales_formal", "cfo_formal", "coo_formal", "cto_formal", "cmo_formal"]),
-        ("sales.12_month_revenue", "sales", "sales.get('12_month_revenue')", "sum(sales.months[*].revenue)", ["head_of_sales_formal"]),
-        ("sales.required_annual_sales", "sales", "sales.get('required_annual_sales')", "annual_revenue_target / annual revenue per sale", ["head_of_sales_formal"]),
-        ("operations.12_month_payroll", "operations", "operations.get('12_month_payroll')", "sum(monthly payroll after hire dates)", ["coo_formal"]),
-        ("technical.delivery_duration_weeks", "technical", "technical.get('delivery_duration_weeks')", "dependency-constrained list schedule with shared capacity", ["cto_formal"]),
-        ("product.priority_scores", "product", "[item.get('priority_score') for item in product.get('features', [])]", "impact/effort*strategic_weight*dependency_factor", ["pm_formal"]),
-    ]
-    namespaces = {"finance": calculations.get("finance", {}), "sales": calculations.get("sales", {}), "operations": calculations.get("operations", {}), "technical": calculations.get("technical", {}), "product": calculations.get("product", {})}
-    for calculation_id, domain, value_expr, formula, agent_inputs in mappings:
-        local_scope = {**namespaces}
-        try:
-            value = eval(value_expr, {"__builtins__": {}}, local_scope)
-        except Exception:
-            value = None
-        engine = str(namespaces[domain].get("model", "deterministic_unknown")) if isinstance(namespaces[domain], dict) else "deterministic_unknown"
-        rows.append({"calculation_id": calculation_id, "domain": domain, "engine": engine, "value": value, "formula": formula, "agent_inputs": agent_inputs})
+    for calculation_id, value in values.items():
+        domain = calculation_id.split(".", 1)[0]
+        rows.append({"calculation_id": calculation_id, "domain": domain, "engine": domains_for_calc[domain].get("model", "deterministic_unknown"), "value": value, "formula": formulas[calculation_id], "agent_inputs": {
+            "finance": ["head_of_sales_formal", "cfo_formal", "coo_formal", "cto_formal", "cmo_formal"],
+            "sales": ["head_of_sales_formal"], "operations": ["coo_formal"], "technical": ["cto_formal"], "product": ["pm_formal"],
+        }[domain]})
     return rows
 
 
@@ -151,10 +150,9 @@ def _build_provenance(state: BoardState) -> dict[str, Any]:
 
 def run_full_pipeline(state: BoardState) -> BoardState:
     stages: list[tuple[str, Callable[[BoardState], Mapping[str, Any]]]] = [
-        ("panel", lambda current: run_panel(current)), ("ceo_task_assignment", ceo_assign_tasks),
-        ("formal_scheduler", run_formal_board), ("domain_calculations", _run_domain_calculations),
-        ("deterministic_consistency", _deterministic_consistency), ("contradiction_adjudication", ceo_adjudicate_contradictions),
-        ("ceo_synthesis", ceo_assemble_report), ("provenance", _build_provenance),
+        ("panel", run_panel), ("ceo_task_assignment", ceo_assign_tasks), ("formal_scheduler", run_formal_board),
+        ("domain_calculations", _run_domain_calculations), ("deterministic_consistency", _deterministic_consistency),
+        ("contradiction_adjudication", ceo_adjudicate_contradictions), ("ceo_synthesis", ceo_assemble_report), ("provenance", _build_provenance),
     ]
     for stage, fn in stages:
         state = _run_stage(state, stage, fn)
@@ -169,22 +167,14 @@ def _notion_sections(state: BoardState) -> list[tuple[str, str]]:
     calculations = state.get("phase2_calculations", {})
     calculations = calculations if isinstance(calculations, dict) else {}
     return [
-        ("Business Brief", compact_json(state.get("brief", {}), 6000)),
-        ("Research Report", str(state.get("research_report", ""))),
-        ("Financial Plan", str(state.get("financial_plan", ""))),
-        ("Deterministic Financial & Scenario Model", compact_json(calculations.get("finance", {}), 22000)),
-        ("Financial Scenario Analysis", compact_json(calculations.get("finance_scenarios", {}), 24000)),
-        ("Sales Funnel Calculation", compact_json(calculations.get("sales", {}), 18000)),
-        ("Workforce & Capacity Calculation", compact_json(calculations.get("operations", {}), 18000)),
-        ("Technical Delivery Calculation", compact_json(calculations.get("technical", {}), 14000)),
-        ("Product Priority Calculation", compact_json(calculations.get("product", {}), 16000)),
-        ("Phase 2 Input Quality", compact_json(state.get("phase2_input_quality", {}), 8000)),
-        ("Formal Consistency Snapshot", compact_json(state.get("formal_snapshot", {}), 18000)),
-        ("Contradiction Adjudication", compact_json(state.get("contradiction_adjudication", {}), 12000)),
-        ("Evidence & Provenance Ledger", compact_json(state.get("provenance_ledger", {}), 30000)),
-        ("Provenance Validation", compact_json(state.get("provenance_validation", {}), 6000)),
-        ("Execution & Revision Summary", compact_json({"status": state.get("scheduler_status", {}), "revision_summary": state.get("revision_summary", {})}, 10000)),
-        ("CEO Board Recommendation", str(state.get("final_board_report", ""))),
+        ("Business Brief", compact_json(state.get("brief", {}), 6000)), ("Research Report", str(state.get("research_report", ""))),
+        ("Financial Plan", str(state.get("financial_plan", ""))), ("Deterministic Financial & Scenario Model", compact_json(calculations.get("finance", {}), 22000)),
+        ("Financial Scenario Analysis", compact_json(calculations.get("finance_scenarios", {}), 24000)), ("Sales Funnel Calculation", compact_json(calculations.get("sales", {}), 18000)),
+        ("Workforce & Capacity Calculation", compact_json(calculations.get("operations", {}), 18000)), ("Technical Delivery Calculation", compact_json(calculations.get("technical", {}), 14000)),
+        ("Product Priority Calculation", compact_json(calculations.get("product", {}), 16000)), ("Phase 2 Input Quality", compact_json(state.get("phase2_input_quality", {}), 8000)),
+        ("Formal Consistency Snapshot", compact_json(state.get("formal_snapshot", {}), 18000)), ("Contradiction Adjudication", compact_json(state.get("contradiction_adjudication", {}), 12000)),
+        ("Evidence & Provenance Ledger", compact_json(state.get("provenance_ledger", {}), 30000)), ("Provenance Validation", compact_json(state.get("provenance_validation", {}), 6000)),
+        ("Execution & Revision Summary", compact_json({"status": state.get("scheduler_status", {}), "revision_summary": state.get("revision_summary", {})}, 10000)), ("CEO Board Recommendation", str(state.get("final_board_report", ""))),
     ]
 
 
@@ -192,7 +182,6 @@ def node_output(state: BoardState) -> BoardState:
     if state.get("pipeline_errors") or not str(state.get("final_board_report", "")).strip():
         state.setdefault("output_errors", []).append({"stage": "output", "message": "Outputs suppressed because the board pipeline did not complete successfully."})
         return state
-
     idea_title = str(state.get("brief", {}).get("idea", "Business Idea"))[:80]
     board_title = f"Board Report — {idea_title} — {datetime.now().strftime('%Y-%m-%d')}"
     sections = _notion_sections(state)
@@ -238,11 +227,10 @@ def run_board_meeting(brief: dict[str, Any]) -> dict[str, Any]:
         runtime = assess_run(cast(dict[str, Any], state))
     return {
         "status": runtime["status"], "success": runtime["success"], "final_report": state.get("final_board_report", ""),
-        "notion_board_url": state.get("notion_board_url", ""), "pdf_path": state.get("pdf_path", ""),
-        "revision_summary": state.get("revision_summary", {}), "consistency_status": state.get("consistency_status", "NOT_RUN"),
-        "deterministic_contradictions": state.get("deterministic_contradictions", []), "contradiction_adjudication": state.get("contradiction_adjudication", {}),
-        "formal_snapshot": state.get("formal_snapshot", {}), "phase2_calculations": state.get("phase2_calculations", {}), "phase2_input_quality": state.get("phase2_input_quality", {}),
+        "notion_board_url": state.get("notion_board_url", ""), "pdf_path": state.get("pdf_path", ""), "revision_summary": state.get("revision_summary", {}),
+        "consistency_status": state.get("consistency_status", "NOT_RUN"), "deterministic_contradictions": state.get("deterministic_contradictions", []),
+        "contradiction_adjudication": state.get("contradiction_adjudication", {}), "formal_snapshot": state.get("formal_snapshot", {}),
+        "phase2_calculations": state.get("phase2_calculations", {}), "phase2_input_quality": state.get("phase2_input_quality", {}),
         "provenance_ledger": state.get("provenance_ledger", {}), "provenance_validation": state.get("provenance_validation", {}), "provenance_summary": state.get("provenance_summary", {}),
-        "scheduler_status": state.get("scheduler_status", {}), "scheduler_events": state.get("scheduler_events", []),
-        "errors": runtime["errors"], "warnings": runtime["warnings"],
+        "scheduler_status": state.get("scheduler_status", {}), "scheduler_events": state.get("scheduler_events", []), "errors": runtime["errors"], "warnings": runtime["warnings"],
     }
