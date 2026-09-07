@@ -10,7 +10,7 @@ from langgraph.graph import END, START, StateGraph
 
 from agents import ceo_adjudicate_contradictions, ceo_assemble_report, ceo_assign_tasks, ceo_evaluate_agent, panel_reaction, run_department
 from analysis import compact_json, consistency_bundle, run_phase2_calculations
-from models import BoardState, build_provenance_ledger, validate_provenance_ledger
+from models import BoardState, build_provenance_ledger, company_state_from_brief, synchronize_deterministic_results, validate_provenance_ledger
 from orchestration import AGENT_ORDER, DynamicReadinessScheduler
 from reports import build_executive_report
 from tools import create_notion_board, create_notion_page, generate_pdf
@@ -41,7 +41,8 @@ def run_panel(state: BoardState) -> dict[str, Any]:
 
 
 def initialize_state(brief: dict[str, Any]) -> BoardState:
-    state: dict[str, Any] = {"brief": brief}
+    company_state = company_state_from_brief(brief)
+    state: dict[str, Any] = {"brief": brief, "company_state": company_state}
     for agent in AGENT_ORDER:
         state.update({
             f"{agent}_panel": "", f"{agent}_formal": {}, f"{agent}_validation": {}, f"{agent}_retrieval_trace": [],
@@ -90,7 +91,10 @@ def _formal_stage_ok(state: BoardState) -> bool:
 
 def _run_domain_calculations(state: BoardState) -> dict[str, Any]:
     result = run_phase2_calculations(cast(dict[str, Any], state))
-    return {"phase2_calculations": result, "phase2_input_quality": result.get("input_quality", {})}
+    company_state = state.get("company_state")
+    if company_state is not None:
+        synchronize_deterministic_results(company_state, result)
+    return {"phase2_calculations": result, "phase2_input_quality": result.get("input_quality", {}), "company_state": company_state}
 
 
 def _deterministic_consistency(state: BoardState) -> dict[str, Any]:
@@ -165,6 +169,7 @@ def _notion_sections(state: BoardState) -> list[tuple[str, str]]:
         ("Formal Consistency Snapshot", compact_json(state.get("formal_snapshot", {}), 18000)), ("Contradiction Adjudication", compact_json(state.get("contradiction_adjudication", {}), 12000)),
         ("Evidence & Provenance Ledger", compact_json(state.get("provenance_ledger", {}), 30000)), ("Provenance Validation", compact_json(state.get("provenance_validation", {}), 6000)),
         ("Execution & Revision Summary", compact_json({"status": state.get("scheduler_status", {}), "revision_summary": state.get("revision_summary", {})}, 10000)), ("CEO Board Recommendation", str(state.get("final_board_report", ""))),
+        ("Canonical Company State", compact_json(cast(Any, state.get("company_state")).to_dict() if state.get("company_state") is not None else {}, 26000)),
     ]
 
 
@@ -223,12 +228,15 @@ def run_board_meeting(brief: dict[str, Any]) -> dict[str, Any]:
         runtime = assess_run(cast(dict[str, Any], state))
     baseline_metrics = build_baseline_metrics(cast(dict[str, Any], state), timer.elapsed_ms())
     state["baseline_metrics"] = baseline_metrics
+    company_state = state.get("company_state")
+    company_state_payload = company_state.to_dict() if company_state is not None else {}
     return {
         "status": runtime["status"], "success": runtime["success"], "final_report": state.get("final_board_report", ""),
         "notion_board_url": state.get("notion_board_url", ""), "pdf_path": state.get("pdf_path", ""), "revision_summary": state.get("revision_summary", {}),
         "consistency_status": state.get("consistency_status", "NOT_RUN"), "deterministic_contradictions": state.get("deterministic_contradictions", []),
         "contradiction_adjudication": state.get("contradiction_adjudication", {}), "formal_snapshot": state.get("formal_snapshot", {}),
         "phase2_calculations": state.get("phase2_calculations", {}), "phase2_input_quality": state.get("phase2_input_quality", {}),
+        "company_state": company_state_payload,
         "provenance_ledger": state.get("provenance_ledger", {}), "provenance_validation": state.get("provenance_validation", {}),
         "provenance_summary": state.get("provenance_summary", {}), "scheduler_status": state.get("scheduler_status", {}),
         "scheduler_events": state.get("scheduler_events", []), "baseline_metrics": baseline_metrics, "errors": runtime["errors"], "warnings": runtime["warnings"],
