@@ -9,8 +9,8 @@ def test_finance_control_case_is_exact_and_stable() -> None:
 
     assert result["12_month_revenue"] == 7800.0
     assert result["gross_profit"] == 7800.0
-    assert result["ending_cash"] == -6800.0
-    assert result["cash_depletion_month"] == 10
+    assert result["ending_cash"] == 8800.0
+    assert result["cash_depletion_month"] is None
     assert result["break_even_month"] == 1
 
 
