@@ -1,9 +1,4 @@
-"""Canonical persistent company world model.
-
-This module is the source-of-truth boundary for organizational reality. Board
-execution artifacts may reference or propose changes to this model, but they do
-not become canonical merely because an LLM emitted them.
-"""
+"""Canonical persistent company world model."""
 
 from __future__ import annotations
 
@@ -125,6 +120,8 @@ class CustomerState(BaseModel):
     active_count: float = Field(default=0, ge=0)
     acquired_this_period: float = Field(default=0, ge=0)
     churned_this_period: float = Field(default=0, ge=0)
+    count_as_of: datetime | None = None
+    count_source: str = "uninitialized"
 
 
 class ProjectState(BaseModel):
@@ -225,12 +222,7 @@ class CompanyState(BaseModel):
 
 
 def company_state_from_brief(brief: dict[str, Any]) -> CompanyState:
-    """Create a conservative world state from a user business brief.
-
-    Free-form values are preserved as context. No financial or operating fact is
-    inferred from prose at this boundary; deterministic engines must establish
-    authoritative quantitative state later.
-    """
+    """Create a conservative world state from a user business brief."""
     identity = CompanyIdentity(
         name=str(brief.get("company_name") or brief.get("idea") or ""),
         description=str(brief.get("idea") or ""),
@@ -269,6 +261,9 @@ def synchronize_deterministic_results(company: CompanyState, calculations: dict[
     sales = calculations.get("sales", {})
     if isinstance(sales, dict) and sales:
         company.sales.funnel_yield = sales.get("funnel_yield")
+        company.sales.qualification_rate = sales.get("qualification_rate")
+        company.sales.opportunity_rate = sales.get("opportunity_rate")
+        company.sales.close_rate = sales.get("close_rate")
         target = sales.get("annual_revenue_target")
         gap = sales.get("target_gap")
         if target is not None:
@@ -280,9 +275,17 @@ def synchronize_deterministic_results(company: CompanyState, calculations: dict[
             "required_annual_sales": sales.get("required_annual_sales"),
             "implied_monthly_traffic_for_target": sales.get("implied_monthly_traffic_for_target"),
         }
-        if isinstance(sales.get("months"), list) and sales["months"]:
-            first = sales["months"][0]
-            company.sales.monthly_traffic = first.get("traffic")
+        months = sales.get("months")
+        if isinstance(months, list) and months:
+            first = months[0]
+            if isinstance(first, dict):
+                company.sales.monthly_traffic = first.get("traffic")
+            company.customers.active_count = float(months[-1].get("ending_customers", 0.0)) if isinstance(months[-1], dict) else 0.0
+            company.customers.acquired_this_period = sum(float(row.get("new_customers", 0.0)) for row in months if isinstance(row, dict))
+            company.customers.churned_this_period = sum(float(row.get("churned_customers", 0.0)) for row in months if isinstance(row, dict))
+            company.customers.count_as_of = utc_now()
+            company.customers.count_source = "deterministic_phase2_sales_forecast"
+        company.record_change("customers", "active_count", company.customers.active_count, source="deterministic", method="phase2_sales_funnel")
         company.record_change("sales", "pipeline_summary", company.sales.pipeline_summary, source="deterministic", method="phase2_sales_funnel")
 
     operations = calculations.get("operations", {})
