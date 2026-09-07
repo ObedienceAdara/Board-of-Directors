@@ -1,0 +1,27 @@
+from __future__ import annotations
+
+import app.pipeline as pipeline
+
+
+class _FakeGraph:
+    def invoke(self, state: dict[str, object]) -> dict[str, object]:
+        state["final_board_report"] = "Deterministic control recommendation"
+        state["pipeline_errors"] = []
+        state["consistency_status"] = "PASS"
+        state["phase2_calculations"] = {}
+        state["provenance_validation"] = {"valid": True}
+        return state
+
+
+def test_run_board_meeting_exposes_phase0_baseline_metrics(monkeypatch) -> None:
+    monkeypatch.setattr(pipeline, "board_graph", _FakeGraph())
+
+    result = pipeline.run_board_meeting({"idea": "control", "target_market": "test"})
+
+    assert result["success"] is True
+    metrics = result["baseline_metrics"]
+    assert metrics["schema_version"] == "1.0"
+    assert metrics["run"]["success"] is True
+    assert metrics["run"]["pipeline_latency_ms"] >= 0.0
+    assert metrics["decision_correctness"]["status"] == "not_scored"
+    assert metrics["llm_cost"]["status"] == "not_available"
