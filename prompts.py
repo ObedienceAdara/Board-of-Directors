@@ -25,7 +25,7 @@ Return ONLY JSON:
     "cfo":"financial assumptions for revenue, COGS, payroll, infrastructure, marketing, cash and scenarios",
     "cto":"engineering phases, team capacity, dependencies, infrastructure and schedule assumptions",
     "cmo":"positioning, acquisition channels, budget and measurable lead assumptions",
-    "head_of_sales":"traffic, qualification, opportunity, close, churn, pricing and revenue funnel assumptions",
+    "head_of_sales":"traffic, qualification, opportunity, close, churn, pricing period and revenue funnel assumptions",
     "coo":"headcount, compensation, hiring dates, ramp and service-capacity assumptions",
     "pm":"MVP features, impact, effort, strategic weights and dependency factors"
   }
@@ -67,6 +67,8 @@ A PASS requires:
 4. Assumptions are explicit and not presented as verified facts.
 5. Evidence-bearing claims use sources where available.
 6. Fields needed by the domain calculator are supplied whenever they are knowable; unknowns must be null rather than invented.
+7. Conversion rates must describe adjacent funnel stages. `lead_to_customer_rate` is legacy-only and must not replace qualification/opportunity/close rates.
+8. Pricing must state `price_period` explicitly when price is not a monthly recurring subscription.
 
 Return ONLY JSON:
 {
@@ -150,7 +152,7 @@ Return ONLY JSON with keys report and analysis.
 analysis schema:
 {
   "market":{"currency":"USD","tam":0,"sam":0,"som":0,"growth_rate":0},
-  "evidence":[{"claim_id":"market.sam","claim":"","value":0,"unit":"","source_name":"","source_title":"","source_url":"","retrieved_context":""}],
+  "evidence":[{"claim_id":"market.sam","claim":"","value":0,"unit":"","source_name":"","source_title":"","source_url":"","evidence_excerpt":""}],
   "competitors":[{"name":"","pricing":[{"amount":0,"currency":"","period":"month|year|one_time|unknown"}],"source_url":"","strength":"","weakness":""}],
   "customer_pain_points":[""],
   "regulatory_notes":[""],
@@ -204,7 +206,7 @@ Required discipline:
 - starting_cash is actual available opening cash; funding_required is not the same thing unless explicitly treated as cash.
 - cogs inputs represent direct cost of delivering revenue; exclude general sales/marketing and corporate overhead.
 - Do not supply computed monthly revenue, gross margin, burn, runway or break-even as authoritative values; the Python engine calculates them.
-- Schedules may contain up to 12 monthly values; a single value can be used as a constant assumption.
+- Schedules may contain up to 12 monthly values; a single-item schedule is interpreted as a constant monthly assumption.
 - All currency numbers must use the same currency.
 - Scenario factors are assumptions; the engine computes scenario outcomes.
 """
@@ -240,8 +242,11 @@ analysis schema:
   "confidence":0.0
 }
 
-The report must state which phases are logically sequential and which can be
-parallelized. Dependencies must name prior phase names exactly.
+`weeks` is person-weeks of effort, not an asserted calendar duration. Dependencies
+may reference any named phase in the same list; the deterministic engine validates
+that every reference exists and rejects cycles. State explicitly which work can
+run in parallel. `weekly_capacity_weeks` is effective person-week capacity per
+person per calendar week; `weekly_capacity_hours` can be supplied instead.
 """
 
 CMO_PROMPT = """
@@ -266,6 +271,7 @@ analysis schema:
 {
   "currency":"USD",
   "marketing_budget":0,
+  "budget_period":"month|quarter|year",
   "channel_allocations":[{"channel":"","amount":0,"expected_leads":0,"expected_customers":0}],
   "launch_weeks":0,
   "launch_milestones":[{"name":"","week":0}],
@@ -275,7 +281,8 @@ analysis schema:
   "confidence":0.0
 }
 
-Channel allocation amounts must sum to marketing_budget. Acquisition numbers
+Channel allocation amounts must sum to marketing_budget. `budget_period` is the
+period represented by marketing_budget and must be explicit. Acquisition numbers
 are assumptions/forecasts unless supported by evidence.
 """
 
@@ -303,15 +310,14 @@ analysis schema:
 {
   "currency":"USD",
   "primary_price":0,
+  "price_period":"month|year|one_time|transaction",
   "starting_customers":0,
   "annual_revenue_target":0,
   "monthly_traffic":[0],
   "qualification_rate":0,
   "opportunity_rate":0,
   "close_rate":0,
-  "lead_to_customer_rate":0,
   "monthly_churn_rate":0,
-  "required_annual_customers":0,
   "average_monthly_new_customers":0,
   "monthly_revenue_targets":[{"month":1,"target":0,"new_customers":0}],
   "funnel_assumptions":{"qualified_leads_per_month":0,"win_rate":0,"sales_cycle_days":0},
@@ -322,8 +328,10 @@ analysis schema:
 
 The deterministic model uses:
 traffic * qualification rate * opportunity rate * close rate = new customers.
-It then applies churn/retention and pricing to calculate revenue. Do not claim
-that the target is achievable merely because it is entered as an assumption.
+It then applies churn/retention and pricing to calculate revenue. `price_period`
+must reflect whether the price is monthly recurring, annual recurring, one-time,
+or transaction-level. Do not use a single aggregate lead_to_customer_rate to
+replace the three adjacent funnel-stage rates.
 """
 
 COO_PROMPT = """
@@ -349,7 +357,7 @@ analysis schema:
   "currency":"USD",
   "headcount_plan":[{"role":"","count":0,"annual_salary":0,"start_month":1,"ramp_months":0,"monthly_capacity_hours":120}],
   "productive_hours_per_employee":120,
-  "workload_hours_per_customer":0,
+  "workload_hours_per_customer":1,
   "default_ramp_months":1,
   "annual_payroll":0,
   "operational_vendors":[{"name":"","monthly_cost":0}],
@@ -362,7 +370,8 @@ analysis schema:
 
 annual payroll in the report can be an assumption, but the calculator must use
 headcount * salary / 12 only for months after each stated start_month. Ramp time
-reduces productive capacity, not payroll.
+reduces productive capacity, not payroll. `workload_hours_per_customer` must be
+strictly positive for capacity analysis.
 """
 
 PM_PROMPT = """
@@ -398,7 +407,8 @@ analysis schema:
 The deterministic score is:
 impact / effort * strategic_weight * dependency_factor.
 Impact and effort are estimates; effort is in person-weeks. Dependency factor
-must be a positive multiplier representing how much dependencies affect urgency.
+must be a positive multiplier representing urgency/criticality, not a hidden
+boost that compensates for missing effort estimates.
 """
 
 PROVENANCE_PROMPT_SUFFIX = """
@@ -416,9 +426,7 @@ Add an analysis.evidence array. Each evidence item must be claim-addressable:
   "evidence_excerpt":"brief excerpt or faithful paraphrase from the supplied web result"
 }
 Only use URLs that appear in the supplied web research. Do not invent retrieval
-timestamps; retrieval time/provider/rank are attached by the system from the
-search tool. For forecasts, estimates, or internal assumptions with no external
-source, do not manufacture evidence; mark them as assumptions.
+timestamps; retrieval time/provider/rank are attached by the system from the search tool. For forecasts, estimates, or internal assumptions with no external source, do not manufacture evidence; mark them as assumptions.
 
 Phase 2 rule: numeric consequences must be left to the deterministic engine.
 Your numerical fields are inputs/assumptions, not authoritative computed outputs.
