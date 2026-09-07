@@ -14,7 +14,7 @@ from models import BoardState, build_provenance_ledger, validate_provenance_ledg
 from orchestration import AGENT_ORDER, DynamicReadinessScheduler
 from reports import build_executive_report
 from tools import create_notion_board, create_notion_page, generate_pdf
-from utils import assess_run
+from utils import PipelineTimer, assess_run, build_baseline_metrics
 
 
 def run_panel(state: BoardState) -> dict[str, Any]:
@@ -54,7 +54,7 @@ def initialize_state(brief: dict[str, Any]) -> BoardState:
         "revision_summary": {}, "formal_snapshot": {}, "deterministic_contradictions": [], "contradiction_adjudication": {},
         "consistency_status": "NOT_RUN", "phase2_calculations": {}, "phase2_input_quality": {}, "provenance_ledger": {},
         "provenance_validation": {}, "provenance_summary": {}, "final_board_report": "", "notion_board_url": "", "notion_board_id": "",
-        "pdf_path": "", "pipeline_errors": [], "output_errors": [],
+        "pdf_path": "", "pipeline_errors": [], "output_errors": [], "baseline_metrics": {},
     })
     return cast(BoardState, state)
 
@@ -213,6 +213,7 @@ board_graph = build_board_graph()
 
 
 def run_board_meeting(brief: dict[str, Any]) -> dict[str, Any]:
+    timer = PipelineTimer()
     try:
         state = board_graph.invoke(initialize_state(brief))
         runtime = assess_run(cast(dict[str, Any], state))
@@ -220,6 +221,8 @@ def run_board_meeting(brief: dict[str, Any]) -> dict[str, Any]:
         state = initialize_state(brief)
         state["pipeline_errors"] = [{"stage": "board_graph", "message": str(exc)}]
         runtime = assess_run(cast(dict[str, Any], state))
+    baseline_metrics = build_baseline_metrics(cast(dict[str, Any], state), timer.elapsed_ms())
+    state["baseline_metrics"] = baseline_metrics
     return {
         "status": runtime["status"], "success": runtime["success"], "final_report": state.get("final_board_report", ""),
         "notion_board_url": state.get("notion_board_url", ""), "pdf_path": state.get("pdf_path", ""), "revision_summary": state.get("revision_summary", {}),
@@ -228,5 +231,5 @@ def run_board_meeting(brief: dict[str, Any]) -> dict[str, Any]:
         "phase2_calculations": state.get("phase2_calculations", {}), "phase2_input_quality": state.get("phase2_input_quality", {}),
         "provenance_ledger": state.get("provenance_ledger", {}), "provenance_validation": state.get("provenance_validation", {}),
         "provenance_summary": state.get("provenance_summary", {}), "scheduler_status": state.get("scheduler_status", {}),
-        "scheduler_events": state.get("scheduler_events", []), "errors": runtime["errors"], "warnings": runtime["warnings"],
+        "scheduler_events": state.get("scheduler_events", []), "baseline_metrics": baseline_metrics, "errors": runtime["errors"], "warnings": runtime["warnings"],
     }
