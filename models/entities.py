@@ -23,7 +23,9 @@ class EntityRef(BaseModel):
 class Money(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    amount: float = Field(ge=0)
+    # Margins, deltas, and forecast cash positions may legitimately be negative.
+    # Individual business fields impose non-negative constraints where required.
+    amount: float
     currency: str = Field(default="USD", min_length=3, max_length=3)
 
 
