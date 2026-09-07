@@ -125,3 +125,4 @@ class BoardState(TypedDict, total=False):
     pdf_path: str
     pipeline_errors: list[dict[str, str]]
     output_errors: list[dict[str, str]]
+    baseline_metrics: dict[str, Any]
