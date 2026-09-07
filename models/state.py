@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+from .company import CompanyState
+
 
 class BusinessBrief(TypedDict, total=False):
     idea: str
@@ -20,7 +22,15 @@ EVALUATED_AGENTS = [
 
 
 class BoardState(TypedDict, total=False):
+    """Transient execution state surrounding the canonical company world.
+
+    ``company_state`` is the authoritative representation of business reality;
+    panel reports, formal analyses, scheduler state, and reports are execution
+    artifacts and must not become competing sources of truth.
+    """
+
     brief: dict[str, Any]
+    company_state: CompanyState
 
     researcher_panel: str
     cfo_panel: str
