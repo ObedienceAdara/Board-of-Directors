@@ -7,15 +7,9 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 AGENT_ORDER = ["researcher", "cfo", "cto", "cmo", "coo", "head_of_sales", "pm"]
-
 DEPENDENCIES: dict[str, tuple[str, ...]] = {
-    "researcher": (),
-    "cfo": ("researcher",),
-    "cto": ("researcher",),
-    "cmo": ("researcher", "cfo"),
-    "coo": ("researcher", "cfo", "cto"),
-    "head_of_sales": ("researcher", "cfo", "cmo"),
-    "pm": ("researcher", "cto", "cmo"),
+    "researcher": (), "cfo": ("researcher",), "cto": ("researcher",), "cmo": ("researcher", "cfo"),
+    "coo": ("researcher", "cfo", "cto"), "head_of_sales": ("researcher", "cfo", "cmo"), "pm": ("researcher", "cto", "cmo"),
 }
 
 
@@ -34,15 +28,7 @@ def now_iso() -> str:
 class DynamicReadinessScheduler:
     """Run independent agents concurrently and launch newly-ready work immediately."""
 
-    def __init__(
-        self,
-        runner: Callable[[str, dict[str, Any]], dict[str, Any]],
-        evaluator: Callable[[str, dict[str, Any]], dict[str, Any]],
-        *,
-        max_workers: int = 7,
-        max_revisions: int = 3,
-        dependencies: dict[str, tuple[str, ...]] | None = None,
-    ) -> None:
+    def __init__(self, runner: Callable[[str, dict[str, Any]], dict[str, Any]], evaluator: Callable[[str, dict[str, Any]], dict[str, Any]], *, max_workers: int = 7, max_revisions: int = 3, dependencies: dict[str, tuple[str, ...]] | None = None) -> None:
         self.runner = runner
         self.evaluator = evaluator
         self.max_workers = max(1, max_workers)
@@ -60,10 +46,8 @@ class DynamicReadinessScheduler:
                 raise ValueError(f"Agent '{agent}' has unknown dependencies: {sorted(unknown)}")
             if agent in self.dependencies.get(agent, ()):
                 raise ValueError(f"Agent '{agent}' cannot depend on itself")
-
         visiting: set[str] = set()
         visited: set[str] = set()
-
         def visit(agent: str) -> None:
             if agent in visiting:
                 raise ValueError(f"Scheduler dependency cycle detected at '{agent}'")
@@ -74,34 +58,23 @@ class DynamicReadinessScheduler:
                 visit(dep)
             visiting.remove(agent)
             visited.add(agent)
-
         for agent in AGENT_ORDER:
             visit(agent)
 
     def _ready(self, agent: str, status: dict[str, str]) -> bool:
-        return status.get(agent) in {"pending", "retry"} and all(
-            status.get(dep) == "passed" for dep in self.dependencies.get(agent, ())
-        )
+        return status.get(agent) in {"pending", "retry"} and all(status.get(dep) == "passed" for dep in self.dependencies.get(agent, ()))
 
     def _blocked_dependants(self, failed_agent: str, status: dict[str, str], events: list[dict[str, Any]]) -> None:
-        """Propagate hard failure through the entire dependency graph."""
         queue = [failed_agent]
         seen = {failed_agent}
         while queue:
             upstream = queue.pop(0)
             for dependant in AGENT_ORDER:
-                if upstream not in self.dependencies.get(dependant, ()):
-                    continue
-                if status.get(dependant) not in {"pending", "retry"}:
+                if upstream not in self.dependencies.get(dependant, ()) or status.get(dependant) not in {"pending", "retry"}:
                     continue
                 status[dependant] = "blocked"
                 blockers = [dep for dep in self.dependencies.get(dependant, ()) if status.get(dep) in {"failed", "blocked"}]
-                events.append({
-                    "event": "blocked",
-                    "agent": dependant,
-                    "blocked_by": blockers or [upstream],
-                    "timestamp": now_iso(),
-                })
+                events.append({"event": "blocked", "agent": dependant, "blocked_by": blockers or [upstream], "timestamp": now_iso()})
                 if dependant not in seen:
                     seen.add(dependant)
                     queue.append(dependant)
@@ -115,7 +88,6 @@ class DynamicReadinessScheduler:
         revisions = {agent: 0 for agent in AGENT_ORDER}
         events: list[dict[str, Any]] = []
         running: dict[Future[Any], tuple[str, int]] = {}
-
         with ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="board-agent") as pool:
             while True:
                 for agent in AGENT_ORDER:
@@ -124,30 +96,20 @@ class DynamicReadinessScheduler:
                     status[agent] = "running"
                     revisions[agent] += 1
                     revision = revisions[agent]
-                    snapshot = self._snapshot(state)
-                    future = pool.submit(self.runner, agent, snapshot)
+                    future = pool.submit(self.runner, agent, self._snapshot(state))
                     running[future] = (agent, revision)
-                    events.append({
-                        "event": "dispatch",
-                        "agent": agent,
-                        "revision": revision,
-                        "dependencies": list(self.dependencies.get(agent, ())),
-                        "timestamp": now_iso(),
-                    })
-
+                    events.append({"event": "dispatch", "agent": agent, "revision": revision, "dependencies": list(self.dependencies.get(agent, ())), "timestamp": now_iso()})
                 if not running:
                     unresolved = [a for a in AGENT_ORDER if status[a] in {"pending", "retry"}]
                     if unresolved:
                         blockers = {a: list(self.dependencies.get(a, ())) for a in unresolved}
                         raise RuntimeError(f"Scheduler deadlock; unresolved agents: {unresolved}; blockers: {blockers}")
                     break
-
                 done, _ = wait(list(running), return_when=FIRST_COMPLETED)
                 for future in done:
                     agent, revision = running.pop(future)
-                    events.append({"event": "complete", "agent": agent, "revision": revision, "timestamp": now_iso()})
                     execution_error = ""
-                    execution_retryable = True
+                    retryable = True
                     output: dict[str, Any] = {}
                     try:
                         result = future.result()
@@ -156,50 +118,26 @@ class DynamicReadinessScheduler:
                         output = result
                     except Exception as exc:
                         execution_error = str(exc)
-                        execution_retryable = bool(getattr(exc, "retryable", True))
-                        output = {}
-                        events.append({
-                            "event": "execution_error",
-                            "agent": agent,
-                            "revision": revision,
-                            "error": execution_error,
-                            "retryable": execution_retryable,
-                            "timestamp": now_iso(),
-                        })
+                        retryable = bool(getattr(exc, "retryable", True))
+                        events.append({"event": "execution_error", "agent": agent, "revision": revision, "error": execution_error, "retryable": retryable, "timestamp": now_iso()})
 
-                    if output:
-                        state.update(output)
                     state[f"{agent}_revisions"] = revision
-
                     if execution_error:
                         state[f"{agent}_passed"] = False
                         state[f"{agent}_feedback"] = f"Execution failed: {execution_error}"
                         state[f"{agent}_execution_error"] = execution_error
-                        if execution_retryable and revision < self.max_revisions:
+                        if retryable and revision < self.max_revisions:
                             status[agent] = "retry"
-                            events.append({
-                                "event": "retry",
-                                "agent": agent,
-                                "revision": revision,
-                                "reason": execution_error,
-                                "timestamp": now_iso(),
-                            })
+                            events.append({"event": "retry", "agent": agent, "revision": revision, "reason": execution_error, "timestamp": now_iso()})
                         else:
                             status[agent] = "failed"
                             state[f"{agent}_forced_accept"] = False
                             self._blocked_dependants(agent, status, events)
-                        events.append({
-                            "event": "evaluation",
-                            "agent": agent,
-                            "revision": revision,
-                            "passed": False,
-                            "evaluation_skipped": True,
-                            "forced_accept": False,
-                            "status": status[agent],
-                            "timestamp": now_iso(),
-                        })
+                        events.append({"event": "evaluation", "agent": agent, "revision": revision, "passed": False, "evaluation_skipped": True, "forced_accept": False, "status": status[agent], "timestamp": now_iso()})
                         continue
 
+                    state.update(output)
+                    state[f"{agent}_execution_error"] = ""
                     evaluation = self.evaluator(agent, self._snapshot(state))
                     if not isinstance(evaluation, dict):
                         evaluation = {"passed": False, "feedback": "Evaluator returned an invalid result."}
@@ -207,7 +145,6 @@ class DynamicReadinessScheduler:
                     passed = bool(evaluation.get("passed", False))
                     feedback = str(evaluation.get("feedback", ""))
                     state[f"{agent}_feedback"] = feedback
-
                     if passed:
                         status[agent] = "passed"
                         state[f"{agent}_passed"] = True
@@ -219,24 +156,9 @@ class DynamicReadinessScheduler:
                         status[agent] = "failed"
                         state[f"{agent}_passed"] = False
                         state[f"{agent}_forced_accept"] = False
-                        events.append({
-                            "event": "failed",
-                            "agent": agent,
-                            "revision": revision,
-                            "reason": feedback or "Evaluation failed after maximum revisions.",
-                            "timestamp": now_iso(),
-                        })
                         self._blocked_dependants(agent, status, events)
-
-                    events.append({
-                        "event": "evaluation",
-                        "agent": agent,
-                        "revision": revision,
-                        "passed": passed,
-                        "forced_accept": False,
-                        "status": status[agent],
-                        "timestamp": now_iso(),
-                    })
+                        events.append({"event": "failed", "agent": agent, "revision": revision, "reason": feedback or "Evaluation failed after maximum revisions.", "timestamp": now_iso()})
+                    events.append({"event": "evaluation", "agent": agent, "revision": revision, "passed": passed, "forced_accept": False, "status": status[agent], "timestamp": now_iso()})
 
         state["scheduler_status"] = status
         state["revision_summary"] = revisions
