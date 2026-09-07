@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 AGENTS = ("researcher", "cfo", "cto", "cmo", "head_of_sales", "coo", "pm")
@@ -17,18 +18,22 @@ def _append_unique(errors: list[dict[str, str]], stage: str, message: str) -> No
 def assess_run(state: dict[str, Any], *, require_outputs: bool = False) -> dict[str, Any]:
     errors: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
-
     scheduler_status = state.get("scheduler_status", {}) or {}
     failed = list(state.get("scheduler_failed_agents", []) or [])
     blocked = list(state.get("scheduler_blocked_agents", []) or [])
+
     for agent in AGENTS:
         execution_error = str(state.get(f"{agent}_execution_error", "")).strip()
         if execution_error:
             _append_unique(errors, agent, execution_error)
     for agent in failed:
-        _append_unique(errors, "scheduler", f"Agent '{agent}' failed after its allowed execution/revision attempts.")
+        feedback = str(state.get(f"{agent}_feedback", "")).strip()
+        detail = f"Agent '{agent}' failed after its allowed attempts."
+        if feedback:
+            detail += f" Last feedback: {feedback[:600]}"
+        _append_unique(errors, "scheduler", detail)
     for agent in blocked:
-        _append_unique(warnings, "scheduler", f"Agent '{agent}' was blocked by an upstream failure; see failed agent(s) above.")
+        _append_unique(warnings, "scheduler", f"Agent '{agent}' was blocked by an upstream failure; inspect scheduler failed-agent diagnostics.")
     if isinstance(scheduler_status, dict) and not scheduler_status:
         _append_unique(errors, "scheduler", "Scheduler did not produce a status map.")
 
@@ -48,8 +53,9 @@ def assess_run(state: dict[str, Any], *, require_outputs: bool = False) -> dict[
         if isinstance(item, dict):
             _append_unique(errors, str(item.get("stage", "output")), str(item.get("message", "Output stage failed.")))
 
-    if not state.get("notion_board_url"):
-        warnings.append({"stage": "notion", "message": "No Notion board URL was produced."})
+    notion_enabled = os.getenv("NOTION_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    if notion_enabled and not state.get("notion_board_url"):
+        warnings.append({"stage": "notion", "message": "Notion integration is enabled but no board URL was produced."})
     if not state.get("pdf_path"):
         warnings.append({"stage": "pdf", "message": "No PDF path was produced."})
     if state.get("panel_errors"):
