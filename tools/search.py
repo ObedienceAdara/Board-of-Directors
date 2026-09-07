@@ -1,8 +1,9 @@
-"""Tavily search integration, safe normalization, and retrieval provenance."""
+"""Tavily search integration, normalization, and retrieval provenance."""
 
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any
 
@@ -60,9 +61,10 @@ def frame_untrusted(text: str) -> str:
 
 def search_with_provenance(query: str, max_results: int = 5) -> dict[str, Any]:
     """Run one web search and retain tool-observed retrieval metadata."""
-    captured_at = _utc_now()
+    requested_at = _utc_now()
     try:
         raw_results = get_search_tool(max_results=max_results).invoke(query)
+        retrieved_at = _utc_now()
         items = _result_items(raw_results)
         request_id = raw_results.get("request_id") if isinstance(raw_results, dict) else None
         records: list[dict[str, Any]] = []
@@ -76,25 +78,44 @@ def search_with_provenance(query: str, max_results: int = 5) -> dict[str, Any]:
                 "publisher": str(item.get("source", "") or item.get("publisher", "")).strip() or None,
                 "query": query,
                 "rank": rank,
-                "retrieved_at": captured_at,
+                "requested_at": requested_at,
+                "retrieved_at": retrieved_at,
                 "provider": "tavily",
                 "score": item.get("score"),
                 "published_at": item.get("published_at"),
                 "request_id": str(request_id).strip() if request_id else None,
                 "content": sanitize_search_content(item.get("content", item.get("snippet", "")))[:1800],
             })
-        return {"query": query, "retrieved_at": captured_at, "provider": "tavily", "results": records, "content": sanitize_search_content(parse_search_results(raw_results)), "error": None}
+        return {"query": query, "requested_at": requested_at, "retrieved_at": retrieved_at, "provider": "tavily", "results": records, "content": sanitize_search_content(parse_search_results(raw_results)), "error": None}
     except Exception as exc:
-        return {"query": query, "retrieved_at": captured_at, "provider": "tavily", "results": [], "content": f"Search unavailable: {exc}", "error": str(exc)}
+        return {"query": query, "requested_at": requested_at, "retrieved_at": _utc_now(), "provider": "tavily", "results": [], "content": "", "error": str(exc)}
 
 
 def multi_search_with_provenance(queries: list[str], max_results: int = 5) -> dict[str, Any]:
-    """Run up to three searches and return model context plus retrieval trace."""
-    searches = [search_with_provenance(str(query), max_results=max_results) for query in queries[:3]]
+    """Run up to three searches concurrently; preserve deterministic query order."""
+    selected = [str(query).strip() for query in queries[:3] if str(query).strip()]
+    if not selected:
+        return {"content": "", "trace": [], "searches": [], "errors": ["No search queries were supplied"]}
+
+    searches_by_index: dict[int, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=min(3, len(selected)), thread_name_prefix="board-search") as pool:
+        futures = {pool.submit(search_with_provenance, query, max_results): index for index, query in enumerate(selected)}
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                searches_by_index[index] = future.result()
+            except Exception as exc:
+                searches_by_index[index] = {"query": selected[index], "results": [], "content": "", "error": str(exc)}
+
+    searches = [searches_by_index[index] for index in range(len(selected))]
+    errors = [f"{item.get('query', 'search')}: {item.get('error')}" for item in searches if item.get("error")]
+    content_parts = [str(item.get("content", "")) for item in searches if item.get("content")]
     return {
-        "content": "\n\n---\n\n".join(item["content"] for item in searches),
+        "content": "\n\n---\n\n".join(content_parts),
         "trace": [result for search in searches for result in search.get("results", []) if isinstance(result, dict)],
         "searches": searches,
+        "errors": errors,
+        "successful_searches": sum(1 for item in searches if item.get("results")),
     }
 
 
