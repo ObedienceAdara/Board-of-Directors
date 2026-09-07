@@ -1,4 +1,4 @@
-"""Build a compact strategic report model from full board state."""
+"""Build a bounded strategic report model from full board state."""
 
 from __future__ import annotations
 
@@ -35,9 +35,22 @@ def _extract(text: Any, limit: int = 4, max_chars: int = 1500) -> str:
         chosen.append(item)
         if len(chosen) >= limit:
             break
-    if not chosen:
-        chosen = [re.sub(r"\s+", " ", raw)]
-    return "\n".join(f"• {item}" for item in chosen)[:max_chars]
+    return "\n".join(f"• {item}" for item in (chosen or [re.sub(r"\s+", " ", raw)]))[:max_chars]
+
+
+def _structured_calculation_text(value: Any, fields: list[tuple[str, str]], max_items: int = 5) -> str:
+    if not isinstance(value, dict):
+        return "• Calculation payload unavailable."
+    lines: list[str] = []
+    for key, label in fields:
+        current = value.get(key)
+        if isinstance(current, (int, float)):
+            lines.append(f"• {label}: {current:g}")
+        elif current is None:
+            lines.append(f"• {label}: not available")
+        else:
+            lines.append(f"• {label}: {str(current)[:300]}")
+    return "\n".join(lines[:max_items]) or "• Calculation payload contained no displayable metrics."
 
 
 def _validated_claims(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -52,18 +65,10 @@ def _validated_claims(state: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _strategic_metrics(state: dict[str, Any]) -> list[tuple[str, str]]:
     preferred = {
-        "finance.startup_cost": "Startup cost",
-        "finance.monthly_operating_cost": "Monthly operating cost",
-        "unit_economics.ltv_cac_ratio": "LTV:CAC",
-        "finance.break_even_month": "Break-even",
-        "technical.mvp_weeks": "MVP timeline",
-        "sales.annual_revenue_target": "Revenue target",
-        "sales.required_annual_customers": "Annual customers required",
-        "marketing.budget": "Marketing budget",
-        "operations.annual_payroll": "Annual payroll",
-        "market.tam": "TAM",
-        "market.sam": "SAM",
-        "market.som": "SOM",
+        "finance.starting_cash": "Starting cash", "finance.startup_cost": "Startup cost", "finance.monthly_operating_cost": "Monthly operating cost",
+        "unit_economics.ltv_cac_ratio": "LTV:CAC", "finance.break_even_month": "Break-even", "technical.mvp_weeks": "MVP timeline",
+        "sales.annual_revenue_target": "Revenue target", "sales.required_annual_customers": "Annual customers required", "pricing.primary_price": "Primary price",
+        "marketing.budget": "Marketing budget", "operations.annual_payroll": "Annual payroll", "market.tam": "TAM", "market.sam": "SAM", "market.som": "SOM",
     }
     metrics: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -90,39 +95,35 @@ def _calculation_metrics(state: dict[str, Any]) -> str:
     product = calculations.get("product", {})
     if not all(isinstance(item, dict) for item in (finance, sales, operations, technical, product)):
         return "• Phase 2 calculation payload is incomplete."
-    lines = [
-        f"• 12-month revenue: {finance.get('12_month_revenue')}",
-        f"• Gross margin: {float(finance.get('gross_margin', 0)) * 100:.1f}%",
-        f"• Contribution margin: {finance.get('contribution_margin')}",
-        f"• Ending cash: {finance.get('ending_cash')}",
-        f"• Runway: {finance.get('runway_months')}",
-        f"• Break-even month: {finance.get('break_even_month')}",
-        f"• Sales target gap: {sales.get('target_gap')}",
-        f"• Peak workforce capacity: {operations.get('peak_capacity_hours')} hours/month",
-        f"• Delivery duration: {technical.get('delivery_duration_weeks')} weeks",
+    gross_margin = finance.get("gross_margin")
+    gross_margin_text = "not available" if gross_margin is None else f"{float(gross_margin) * 100:.1f}%"
+    return "\n".join([
+        f"• 12-month revenue: {finance.get('12_month_revenue', 'not available')}",
+        f"• Gross margin: {gross_margin_text}",
+        f"• Contribution margin: {finance.get('contribution_margin', 'not available')}",
+        f"• Ending cash: {finance.get('ending_cash', 'not available')}",
+        f"• Runway: {finance.get('runway_months', 'not available')}",
+        f"• Cash depletion month: {finance.get('cash_depletion_month', 'none in forecast')}",
+        f"• Break-even month: {finance.get('break_even_month', 'not achieved')}",
+        f"• Sales target gap: {sales.get('target_gap', 'not available')}",
+        f"• Peak workforce capacity: {operations.get('peak_capacity_hours', 'not available')} hours/month",
+        f"• Delivery duration: {technical.get('delivery_duration_weeks', 'not available')} weeks",
         f"• MVP features ranked: {len(product.get('mvp_features', []))}",
-    ]
-    return "\n".join(lines)
+    ])
 
 
 def _provenance_metrics(state: dict[str, Any]) -> str:
     summary = state.get("provenance_summary", {}) or {}
     if not isinstance(summary, dict) or not summary:
         return "• Provenance ledger not generated."
-    total = summary.get("total_claims", 0)
-    sourced = summary.get("sourced_claims", 0)
-    derived = summary.get("derived_claims", 0)
-    asserted = summary.get("agent_assertions", 0)
-    decisions = summary.get("decision_records", 0)
-    coverage = float(summary.get("evidence_coverage_ratio", 0.0)) * 100
-    return (
-        f"• Claims tracked: {total}\n"
-        f"• Source-backed claims: {sourced}\n"
-        f"• Deterministically derived claims: {derived}\n"
-        f"• Agent assertions without external source linkage: {asserted}\n"
-        f"• Evidence coverage: {coverage:.1f}%\n"
-        f"• Decisions linked to lineage: {decisions}"
-    )
+    coverage_raw = summary.get("evidence_coverage_ratio", 0.0)
+    try:
+        coverage = float(coverage_raw) * 100
+    except (TypeError, ValueError):
+        coverage = 0.0
+    return (f"• Claims tracked: {summary.get('total_claims', 0)}\n• Source-backed claims: {summary.get('sourced_claims', 0)}\n"
+            f"• Deterministically derived claims: {summary.get('derived_claims', 0)}\n• Agent assertions without external source linkage: {summary.get('agent_assertions', 0)}\n"
+            f"• Evidence coverage: {coverage:.1f}%\n• Decisions linked to lineage: {summary.get('decision_records', 0)}")
 
 
 def _risk_lines(state: dict[str, Any]) -> str:
@@ -140,16 +141,15 @@ def _risk_lines(state: dict[str, Any]) -> str:
 
 
 def _first_90_days(state: dict[str, Any]) -> list[tuple[str, str]]:
-    """Turn actual board outputs into an execution sequence instead of boilerplate."""
     pm = _extract(state.get("product_roadmap"), 3, 1000)
     tech = _extract(state.get("tech_plan"), 3, 1000)
-    gtM = _extract(state.get("marketing_plan"), 3, 1000)
+    gtm = _extract(state.get("marketing_plan"), 3, 1000)
     sales = _extract(state.get("sales_strategy"), 3, 900)
     ops = _extract(state.get("operations_plan"), 2, 700)
     finance = _extract(state.get("financial_plan"), 2, 700)
     return [
         ("0–30 days", f"{pm}\n{tech}\n• Establish the financial and customer-validation baseline.\n{finance}"),
-        ("31–60 days", f"{gtM}\n{sales}\n• Run a controlled launch with measurable acquisition and conversion targets."),
+        ("31–60 days", f"{gtm}\n{sales}\n• Run a controlled launch with measurable acquisition and conversion targets."),
         ("61–90 days", f"{ops}\n• Review observed economics, product adoption and delivery capacity.\n• Scale the strongest validated path, revise weak assumptions, or stop."),
     ]
 
@@ -165,15 +165,16 @@ def build_executive_report(state: dict[str, Any]) -> dict[str, Any]:
     scheduler = state.get("scheduler_status", {}) or {}
     passed = sum(1 for value in scheduler.values() if value == "passed")
     total = len(scheduler)
+    phase2 = state.get("phase2_calculations", {}) if isinstance(state.get("phase2_calculations"), dict) else {}
 
     pages = [
         {"title": "Executive Decision Brief", "subtitle": "What the board believes, what matters most, and what to do next", "blocks": [("Decision", _extract(final_report, 4, 1900)), ("Computed Phase 2 Results", calculation_text), ("Key Metrics", metric_text), ("Board Integrity", f"Consistency: {consistency}. Department execution: {passed}/{total} passed.")]},
         {"title": "The Opportunity", "subtitle": "Market attractiveness and strategic rationale", "blocks": [("Market evidence", _extract(state.get("research_report"), 5, 2000)), ("Founder / fit", _extract(brief.get("founder_background"), 2, 700))]},
         {"title": "Financial Case", "subtitle": "Economics, capital requirements, and viability", "blocks": [("Financial view", _extract(state.get("financial_plan"), 6, 2200)), ("Deterministic financial model", calculation_text), ("Normalized metrics", metric_text)]},
-        {"title": "Technical Feasibility", "subtitle": "Architecture, constraints, delivery risk and MVP boundary", "blocks": [("Engineering view", _extract(state.get("tech_plan"), 6, 2200)), ("Deterministic delivery model", _calculation_metrics(state))]},
-        {"title": "Go-To-Market", "subtitle": "Positioning, channels and demand generation", "blocks": [("Marketing view", _extract(state.get("marketing_plan"), 6, 2200)), ("Sales engine", _extract(state.get("sales_strategy"), 4, 1500)), ("Deterministic funnel", _extract(state.get("phase2_calculations", {}).get("sales", {}), 4, 1000) if isinstance(state.get("phase2_calculations"), dict) else "") ]},
-        {"title": "Operating Model", "subtitle": "People, process, capacity and execution model", "blocks": [("Operations view", _extract(state.get("operations_plan"), 6, 2200)), ("Deterministic workforce", _extract(state.get("phase2_calculations", {}).get("operations", {}), 4, 1200) if isinstance(state.get("phase2_calculations"), dict) else "") ]},
-        {"title": "Product & MVP", "subtitle": "What should be built first and what should wait", "blocks": [("Product view", _extract(state.get("product_roadmap"), 7, 2500)), ("Deterministic priority model", _extract(state.get("phase2_calculations", {}).get("product", {}), 4, 1300) if isinstance(state.get("phase2_calculations"), dict) else "") ]},
+        {"title": "Technical Feasibility", "subtitle": "Architecture, constraints, delivery risk and MVP boundary", "blocks": [("Engineering view", _extract(state.get("tech_plan"), 6, 2200)), ("Deterministic delivery model", _structured_calculation_text(phase2.get("technical", {}), [("delivery_duration_weeks", "Delivery duration"), ("total_effort_weeks", "Total effort"), ("weekly_team_capacity", "Weekly team capacity")]))]},
+        {"title": "Go-To-Market", "subtitle": "Positioning, channels and demand generation", "blocks": [("Marketing view", _extract(state.get("marketing_plan"), 6, 2200)), ("Sales engine", _extract(state.get("sales_strategy"), 4, 1500)), ("Deterministic funnel", _structured_calculation_text(phase2.get("sales", {}), [("12_month_revenue", "12-month revenue"), ("target_gap", "Target gap"), ("funnel_yield", "Funnel yield"), ("ending_customers", "Ending customers")]))]},
+        {"title": "Operating Model", "subtitle": "People, process, capacity and execution model", "blocks": [("Operations view", _extract(state.get("operations_plan"), 6, 2200)), ("Deterministic workforce", _structured_calculation_text(phase2.get("operations", {}), [("12_month_payroll", "12-month payroll"), ("annual_payroll_run_rate", "Steady-state payroll run rate"), ("peak_headcount", "Peak headcount"), ("peak_capacity_hours", "Peak capacity hours"), ("required_monthly_customers", "Required monthly customers")]))]},
+        {"title": "Product & MVP", "subtitle": "What should be built first and what should wait", "blocks": [("Product view", _extract(state.get("product_roadmap"), 7, 2500)), ("Deterministic priority model", _structured_calculation_text(phase2.get("product", {}), [("mvp_features", "MVP features"), ("features", "All ranked features")]))]},
         {"title": "Risks & Contradictions", "subtitle": "The assumptions most likely to invalidate the plan", "blocks": [("Cross-functional risk register", _risk_lines(state)), ("CEO synthesis", _extract(final_report, 3, 1200))]},
         {"title": "First 90 Days", "subtitle": "Execution sequence derived from the board analysis", "blocks": _first_90_days(state)},
         {"title": "Assumptions & Evidence", "subtitle": "What is known, inferred and still uncertain", "blocks": [("Provenance integrity", _provenance_metrics(state)), ("Source / evidence posture", _extract(state.get("research_report"), 5, 1900)), ("Open questions", _extract(state.get("contradiction_adjudication"), 4, 1300))]},
