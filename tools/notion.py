@@ -1,62 +1,79 @@
-"""Notion API integration."""
+"""Notion API integration using the current data-source page contract."""
 
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
 
 NOTION_API_BASE = "https://api.notion.com/v1"
-NOTION_API_KEY = os.getenv("NOTION_API_KEY", "")
-NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "")
-NOTION_ENABLED = os.getenv("NOTION_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+NOTION_VERSION = "2026-03-11"
 
 
-def _headers() -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {NOTION_API_KEY}",
-        "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28",
-    }
+def _config() -> tuple[str, str, bool]:
+    key = os.getenv("NOTION_API_KEY", "").strip()
+    database_id = os.getenv("NOTION_DATABASE_ID", "").strip()
+    enabled = os.getenv("NOTION_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    return key, database_id, enabled
+
+
+def _headers(api_key: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Notion-Version": NOTION_VERSION}
+
+
+def _request(method: str, path: str, api_key: str, **kwargs: Any) -> dict[str, Any]:
+    response = requests.request(method, f"{NOTION_API_BASE}{path}", headers=_headers(api_key), timeout=30, **kwargs)
+    if not response.ok:
+        raise RuntimeError(f"Notion API {method} {path} failed ({response.status_code}): {response.text[:800]}")
+    data = response.json()
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Notion API {method} {path} returned a non-object response")
+    return data
+
+
+def _resolve_data_source(api_key: str, database_id: str) -> tuple[str, str]:
+    database = _request("GET", f"/databases/{database_id}", api_key)
+    sources = database.get("data_sources", [])
+    if not isinstance(sources, list) or not sources:
+        # Older single-source databases may still expose a database parent.
+        return database_id, "Name"
+    first = sources[0] if isinstance(sources[0], dict) else {}
+    data_source_id = str(first.get("id", "")).strip()
+    if not data_source_id:
+        raise RuntimeError("Notion database returned no usable data source ID")
+    source = _request("GET", f"/data_sources/{data_source_id}", api_key)
+    properties = source.get("properties", {})
+    if not isinstance(properties, dict):
+        properties = {}
+    title_property = next((name for name, spec in properties.items() if isinstance(spec, dict) and spec.get("type") == "title"), "Name")
+    return data_source_id, title_property
 
 
 def create_notion_board(title: str) -> str:
-    if not NOTION_ENABLED or not NOTION_API_KEY or not NOTION_DATABASE_ID:
+    api_key, database_id, enabled = _config()
+    if not enabled or not api_key or not database_id:
         return ""
+    data_source_id, title_property = _resolve_data_source(api_key, database_id)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     payload: dict[str, Any] = {
-        "parent": {"database_id": NOTION_DATABASE_ID},
-        "properties": {"Name": {"title": [{"text": {"content": title[:2000]}}]}},
+        "parent": {"data_source_id": data_source_id},
+        "properties": {title_property: {"title": [{"text": {"content": title[:2000]}}]}},
         "children": [
             {"object": "block", "type": "heading_1", "heading_1": {"rich_text": [{"type": "text", "text": {"content": title[:2000]}}]}},
-            {"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"}}]}},
+            {"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": f"Generated: {now}"}}]}},
         ],
     }
-    response = requests.post(f"{NOTION_API_BASE}/pages", headers=_headers(), json=payload, timeout=30)
-    if response.status_code == 200:
-        data = response.json()
-        return str(data.get("id", ""))
-    raise RuntimeError(f"Notion board creation failed ({response.status_code}): {response.text[:500]}")
+    return str(_request("POST", "/pages", api_key, json=payload).get("id", ""))
 
 
 def create_notion_page(parent_id: str, title: str, content: str) -> str:
-    if not NOTION_ENABLED or not parent_id:
+    api_key, _, enabled = _config()
+    if not enabled or not api_key or not parent_id:
         return ""
     chunks = [content[i : i + 1900] for i in range(0, len(content), 1900)] or [""]
-    blocks = [
-        {"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": title[:2000]}}]}}
-    ]
-    blocks.extend(
-        {"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": chunk}}]}}
-        for chunk in chunks
-    )
-    payload: dict[str, Any] = {
-        "parent": {"page_id": parent_id},
-        "properties": {"title": {"title": [{"text": {"content": title[:2000]}}]}},
-        "children": blocks,
-    }
-    response = requests.post(f"{NOTION_API_BASE}/pages", headers=_headers(), json=payload, timeout=30)
-    if response.status_code == 200:
-        return str(response.json().get("url", ""))
-    raise RuntimeError(f"Notion page creation failed for '{title}' ({response.status_code}): {response.text[:500]}")
+    blocks: list[dict[str, Any]] = [{"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": title[:2000]}}]}}]
+    blocks.extend({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": chunk}}]}} for chunk in chunks)
+    payload: dict[str, Any] = {"parent": {"page_id": parent_id}, "properties": {"title": [{"type": "text", "text": {"content": title[:2000]}}]}, "children": blocks}
+    return str(_request("POST", "/pages", api_key, json=payload).get("url", ""))
