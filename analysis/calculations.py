@@ -11,6 +11,7 @@ from typing import Any
 
 MONTHS = 12
 EPSILON = 1e-9
+VALID_PRICE_PERIODS = {"month", "year", "one_time", "transaction"}
 
 
 def number(value: Any, default: float | None = None) -> float | None:
@@ -20,8 +21,16 @@ def number(value: Any, default: float | None = None) -> float | None:
         result = float(value)
         return result if isfinite(result) else default
     if isinstance(value, str):
+        text = value.replace(",", "").replace("$", "").replace("%", "").strip().lower()
+        multiplier = 1.0
+        if text.endswith("k"):
+            multiplier, text = 1_000.0, text[:-1]
+        elif text.endswith("m"):
+            multiplier, text = 1_000_000.0, text[:-1]
+        elif text.endswith("b"):
+            multiplier, text = 1_000_000_000.0, text[:-1]
         try:
-            result = float(value.replace(",", "").replace("$", "").replace("%", "").strip())
+            result = float(text) * multiplier
             return result if isfinite(result) else default
         except ValueError:
             return default
@@ -29,23 +38,37 @@ def number(value: Any, default: float | None = None) -> float | None:
 
 
 def nonnegative(value: Any, default: float = 0.0) -> float:
-    result = number(value, default)
-    return max(result if result is not None else default, 0.0)
+    result = number(value, None)
+    if result is None:
+        return float(default)
+    if result < 0:
+        raise ValueError(f"Expected a non-negative number, got {result}")
+    return result
 
 
 def rate(value: Any, default: float = 0.0) -> float:
-    result = number(value, default)
+    result = number(value, None)
     if result is None:
-        return default
+        return float(default)
+    if result < 0:
+        raise ValueError(f"Expected a non-negative rate, got {result}")
     if result > 1:
         result /= 100.0
-    return min(max(result, 0.0), 1.0)
+    if result > 1:
+        raise ValueError(f"Rate must be between 0 and 1 or 0 and 100 percent, got {result}")
+    return result
 
 
-def _monthly(values: Any) -> list[float]:
-    if not isinstance(values, list) or not values:
-        return [0.0] * MONTHS
-    output = [nonnegative(value) for value in values[:MONTHS]]
+def _monthly(values: Any, *, default: float = 0.0) -> list[float]:
+    if values is None:
+        return [default] * MONTHS
+    if not isinstance(values, list):
+        raise ValueError("Monthly schedule must be a list, a scalar is not a valid schedule")
+    if not values:
+        return [default] * MONTHS
+    if len(values) > MONTHS:
+        raise ValueError(f"Monthly schedule cannot contain more than {MONTHS} values")
+    output = [nonnegative(value) for value in values]
     return output + [output[-1]] * (MONTHS - len(output))
 
 
@@ -53,10 +76,33 @@ def _round(value: float, digits: int = 2) -> float:
     return round(value, digits)
 
 
+def _price_per_month(price: float, price_period: str) -> float:
+    if price_period == "month":
+        return price
+    if price_period == "year":
+        return price / 12.0
+    return price
+
+
+def _is_recurring(price_period: str) -> bool:
+    return price_period in {"month", "year"}
+
+
+def _validate_price_period(value: Any) -> str:
+    period = str(value or "month").strip().lower()
+    aliases = {"monthly": "month", "annual": "year", "yearly": "year", "once": "one_time", "per_transaction": "transaction"}
+    period = aliases.get(period, period)
+    if period not in VALID_PRICE_PERIODS:
+        raise ValueError(f"Unsupported price_period '{period}'")
+    return period
+
+
 def calculate_financial_model(inputs: dict[str, Any]) -> dict[str, Any]:
     """Compute monthly P&L, customer base, cash balance, burn and runway."""
     starting_cash = nonnegative(inputs.get("starting_cash"))
+    startup_costs = nonnegative(inputs.get("startup_costs"))
     price = nonnegative(inputs.get("price"))
+    price_period = _validate_price_period(inputs.get("price_period", "month"))
     customers = nonnegative(inputs.get("starting_customers"))
     churn = rate(inputs.get("churn_rate"))
     cogs_unit = nonnegative(inputs.get("cogs_per_customer"))
@@ -67,24 +113,33 @@ def calculate_financial_model(inputs: dict[str, Any]) -> dict[str, Any]:
     marketing = _monthly(inputs.get("marketing_monthly"))
     other = _monthly(inputs.get("other_monthly"))
 
-    cash = starting_cash
+    cash = starting_cash - startup_costs
+    opening_cash = cash
     break_even_month: int | None = None
+    cash_depletion_month: int | None = None
     months: list[dict[str, Any]] = []
+
     for month in range(1, MONTHS + 1):
         new = new_customers[month - 1]
         churned = min(customers, customers * churn)
         ending_customers = max(customers - churned + new, 0.0)
         average_customers = (customers + ending_customers) / 2.0
-        revenue = average_customers * price
+        if _is_recurring(price_period):
+            revenue = average_customers * _price_per_month(price, price_period)
+        else:
+            revenue = new * price
         cogs = revenue * cogs_rate + average_customers * cogs_unit
         gross_profit = revenue - cogs
         fixed_opex = payroll[month - 1] + infrastructure[month - 1] + marketing[month - 1] + other[month - 1]
         total_costs = cogs + fixed_opex
         net_burn = total_costs - revenue
-        contribution = revenue - cogs - marketing[month - 1]
+        cash_before = cash
         cash -= net_burn
         if break_even_month is None and net_burn <= EPSILON:
             break_even_month = month
+        if cash_depletion_month is None and cash <= EPSILON:
+            cash_depletion_month = month
+
         months.append({
             "month": month,
             "customers": _round(ending_customers, 3),
@@ -100,9 +155,10 @@ def calculate_financial_model(inputs: dict[str, Any]) -> dict[str, Any]:
             "other_opex": _round(other[month - 1]),
             "operating_costs": _round(total_costs),
             "net_burn": _round(net_burn),
+            "cash_before": _round(cash_before),
             "ending_cash": _round(cash),
-            "contribution_margin": _round(contribution),
-            "contribution_margin_ratio": _round(contribution / revenue, 4) if revenue > EPSILON else 0.0,
+            "contribution_margin": _round(revenue - cogs - marketing[month - 1]),
+            "contribution_margin_ratio": _round((revenue - cogs - marketing[month - 1]) / revenue, 4) if revenue > EPSILON else 0.0,
         })
         customers = ending_customers
 
@@ -110,12 +166,24 @@ def calculate_financial_model(inputs: dict[str, Any]) -> dict[str, Any]:
     cogs_total = sum(float(row["cogs"]) for row in months)
     opex_total = sum(float(row["payroll"]) + float(row["infrastructure"]) + float(row["marketing"]) + float(row["other_opex"]) for row in months)
     contribution_total = revenue_total - cogs_total - sum(float(row["marketing"]) for row in months)
-    positive_burns = [float(row["net_burn"]) for row in months if float(row["net_burn"]) > EPSILON]
-    average_burn = sum(positive_burns) / len(positive_burns) if positive_burns else 0.0
-    runway = starting_cash / average_burn if average_burn > EPSILON else None
-    minimum_cash = min((float(row["ending_cash"]) for row in months), default=starting_cash)
+    minimum_cash = min([opening_cash, *(float(row["ending_cash"]) for row in months)])
+
+    runway: float | None
+    if opening_cash <= EPSILON:
+        runway = 0.0 if any(float(row["net_burn"]) > EPSILON for row in months) else None
+    elif cash_depletion_month is not None:
+        depleted = months[cash_depletion_month - 1]
+        burn = float(depleted["net_burn"])
+        cash_before = max(float(depleted["cash_before"]), 0.0)
+        runway = (cash_depletion_month - 1) + (cash_before / burn if burn > EPSILON else 0.0)
+    else:
+        runway = None
+
     return {
-        "model": "deterministic_financial_v1",
+        "model": "deterministic_financial_v2",
+        "opening_cash_after_startup": _round(opening_cash),
+        "startup_costs": _round(startup_costs),
+        "price_period": price_period,
         "months": months,
         "monthly_revenue": months[-1]["revenue"] if months else 0.0,
         "monthly_costs": months[-1]["operating_costs"] if months else 0.0,
@@ -124,8 +192,10 @@ def calculate_financial_model(inputs: dict[str, Any]) -> dict[str, Any]:
         "contribution_margin": _round(contribution_total),
         "contribution_margin_ratio": _round(contribution_total / revenue_total, 4) if revenue_total > EPSILON else 0.0,
         "net_burn": months[-1]["net_burn"] if months else 0.0,
-        "ending_cash": _round(months[-1]["ending_cash"] if months else starting_cash),
+        "ending_cash": _round(months[-1]["ending_cash"] if months else opening_cash),
         "runway_months": None if runway is None else _round(runway),
+        "cash_depletion_month": cash_depletion_month,
+        "cash_positive_through_forecast": cash_depletion_month is None,
         "break_even_month": break_even_month,
         "12_month_revenue": _round(revenue_total),
         "12_month_cogs": _round(cogs_total),
@@ -139,9 +209,9 @@ def calculate_financial_scenarios(base_inputs: dict[str, Any], scenarios: Any = 
     """Recompute the financial model for conservative/base/optimistic assumptions."""
     definitions = scenarios if isinstance(scenarios, dict) else {}
     defaults = {
-        "conservative": {"customer_growth_factor": 0.75, "price_factor": 0.95},
-        "base": {"customer_growth_factor": 1.0, "price_factor": 1.0},
-        "optimistic": {"customer_growth_factor": 1.25, "price_factor": 1.05},
+        "conservative": {"customer_growth_factor": 0.75, "price_factor": 0.95, "cogs_percent_revenue": None},
+        "base": {"customer_growth_factor": 1.0, "price_factor": 1.0, "cogs_percent_revenue": None},
+        "optimistic": {"customer_growth_factor": 1.25, "price_factor": 1.05, "cogs_percent_revenue": None},
     }
     base_new = _monthly(base_inputs.get("monthly_new_customers"))
     output: dict[str, Any] = {}
@@ -150,10 +220,14 @@ def calculate_financial_scenarios(base_inputs: dict[str, Any], scenarios: Any = 
         definition = definition if isinstance(definition, dict) else {}
         growth = nonnegative(definition.get("customer_growth_factor"), default["customer_growth_factor"])
         price_factor = nonnegative(definition.get("price_factor"), default["price_factor"])
+        if growth == 0 and definition.get("customer_growth_factor") not in (0, 0.0):
+            growth = default["customer_growth_factor"]
+        if price_factor == 0 and definition.get("price_factor") not in (0, 0.0):
+            price_factor = default["price_factor"]
         scenario = dict(base_inputs)
         scenario["monthly_new_customers"] = [value * growth for value in base_new]
         scenario["price"] = nonnegative(base_inputs.get("price")) * price_factor
-        if "cogs_percent_revenue" in definition:
+        if "cogs_percent_revenue" in definition and definition.get("cogs_percent_revenue") is not None:
             scenario["cogs_percent_revenue"] = definition["cogs_percent_revenue"]
         output[name] = {
             "assumptions": {
@@ -163,7 +237,7 @@ def calculate_financial_scenarios(base_inputs: dict[str, Any], scenarios: Any = 
             },
             "calculation": calculate_financial_model(scenario),
         }
-    return {"model": "deterministic_financial_scenarios_v1", "scenarios": output}
+    return {"model": "deterministic_financial_scenarios_v2", "scenarios": output}
 
 
 def calculate_sales_funnel(inputs: dict[str, Any]) -> dict[str, Any]:
@@ -173,10 +247,12 @@ def calculate_sales_funnel(inputs: dict[str, Any]) -> dict[str, Any]:
     opportunity = rate(inputs.get("opportunity_rate"))
     close = rate(inputs.get("close_rate"))
     price = nonnegative(inputs.get("price"))
+    price_period = _validate_price_period(inputs.get("price_period", "month"))
     churn = rate(inputs.get("monthly_churn_rate"))
     customers = nonnegative(inputs.get("starting_customers"))
     target = nonnegative(inputs.get("annual_revenue_target"))
     rows: list[dict[str, Any]] = []
+    monthly_unit_revenue = _price_per_month(price, price_period) if _is_recurring(price_period) else price
     for month in range(1, MONTHS + 1):
         visitors = traffic[month - 1]
         qualified = visitors * qualification
@@ -185,6 +261,7 @@ def calculate_sales_funnel(inputs: dict[str, Any]) -> dict[str, Any]:
         churned = customers * churn
         ending_customers = max(customers - churned + won, 0.0)
         average_customers = (customers + ending_customers) / 2.0
+        revenue = average_customers * monthly_unit_revenue if _is_recurring(price_period) else won * price
         rows.append({
             "month": month,
             "traffic": _round(visitors, 3),
@@ -193,20 +270,22 @@ def calculate_sales_funnel(inputs: dict[str, Any]) -> dict[str, Any]:
             "new_customers": _round(won, 3),
             "churned_customers": _round(churned, 3),
             "ending_customers": _round(ending_customers, 3),
-            "revenue": _round(average_customers * price),
+            "revenue": _round(revenue),
         })
         customers = ending_customers
     annual_revenue = sum(float(row["revenue"]) for row in rows)
-    required_customers = target / price if price > EPSILON else None
+    required_sales = target / (price * (12 if price_period == "year" else 1)) if price > EPSILON else None
     funnel_yield = qualification * opportunity * close
-    implied_traffic = required_customers / (12 * funnel_yield) if required_customers is not None and funnel_yield > EPSILON else None
+    implied_traffic = required_sales / (12 * funnel_yield) if required_sales is not None and funnel_yield > EPSILON else None
     return {
-        "model": "deterministic_sales_funnel_v1",
+        "model": "deterministic_sales_funnel_v2",
+        "price_period": price_period,
+        "monthly_unit_revenue": _round(monthly_unit_revenue),
         "months": rows,
         "12_month_revenue": _round(annual_revenue),
         "annual_revenue_target": _round(target),
         "target_gap": _round(target - annual_revenue),
-        "required_annual_customers": None if required_customers is None else _round(required_customers, 3),
+        "required_annual_sales": None if required_sales is None else _round(required_sales, 3),
         "implied_monthly_traffic_for_target": None if implied_traffic is None else _round(implied_traffic, 3),
         "funnel_yield": _round(funnel_yield, 6),
         "ending_customers": rows[-1]["ending_customers"] if rows else 0.0,
@@ -222,17 +301,24 @@ def calculate_workforce_capacity(inputs: dict[str, Any]) -> dict[str, Any]:
     required = nonnegative(inputs.get("required_monthly_customers"))
     normalized: list[dict[str, Any]] = []
     runrate = 0.0
-    if isinstance(hires, list):
-        for item in hires[:50]:
-            if not isinstance(item, dict):
-                continue
-            count = nonnegative(item.get("count"))
-            salary = nonnegative(item.get("annual_salary"))
-            start = max(1, int(nonnegative(item.get("start_month"), 1.0)))
-            ramp = max(0, int(nonnegative(item.get("ramp_months"), float(default_ramp))))
-            hours = nonnegative(item.get("monthly_capacity_hours"), productive)
-            runrate += count * salary
-            normalized.append({"count": count, "salary": salary, "start": start, "ramp": ramp, "hours": hours})
+    if not isinstance(hires, list):
+        raise ValueError("headcount_plan must be a list")
+    for item in hires[:50]:
+        if not isinstance(item, dict):
+            raise ValueError("each headcount entry must be an object")
+        count = nonnegative(item.get("count"))
+        salary = nonnegative(item.get("annual_salary"))
+        start_value = number(item.get("start_month"), 1.0)
+        ramp_value = number(item.get("ramp_months"), float(default_ramp))
+        start = int(start_value if start_value is not None else 1)
+        ramp = int(ramp_value if ramp_value is not None else default_ramp)
+        if start < 1 or start > MONTHS:
+            raise ValueError(f"start_month must be between 1 and {MONTHS}")
+        if ramp < 0:
+            raise ValueError("ramp_months cannot be negative")
+        hours = nonnegative(item.get("monthly_capacity_hours"), productive)
+        runrate += count * salary
+        normalized.append({"count": count, "salary": salary, "start": start, "ramp": ramp, "hours": hours})
 
     months: list[dict[str, Any]] = []
     for month in range(1, MONTHS + 1):
@@ -254,59 +340,139 @@ def calculate_workforce_capacity(inputs: dict[str, Any]) -> dict[str, Any]:
             "payroll": _round(payroll),
             "capacity_gap": bool(capacity_customers is not None and capacity_customers + EPSILON < required),
         })
+    peak_required = max((row["capacity_customers"] or 0.0 for row in months), default=0.0)
     return {
-        "model": "deterministic_workforce_v1",
+        "model": "deterministic_workforce_v2",
         "months": months,
         "12_month_payroll": _round(sum(float(row["payroll"]) for row in months)),
         "annual_payroll_run_rate": _round(runrate),
         "peak_headcount": max((row["headcount"] for row in months), default=0.0),
         "peak_capacity_hours": max((row["capacity_hours"] for row in months), default=0.0),
+        "peak_capacity_customers": _round(peak_required, 3),
         "required_monthly_customers": _round(required, 3),
         "capacity_gap_months": [row["month"] for row in months if row["capacity_gap"]],
     }
 
 
 def calculate_delivery_model(inputs: dict[str, Any]) -> dict[str, Any]:
-    """Convert engineering phase effort, team capacity and dependencies into schedule weeks."""
+    """Schedule dependency-constrained phase effort with shared team capacity."""
     phases = inputs.get("development_phases", [])
     team = inputs.get("engineering_team", [])
     buffer = rate(inputs.get("schedule_buffer"), 0.1)
-    capacity = 0.0
-    if isinstance(team, list):
-        for member in team:
-            if not isinstance(member, dict):
-                continue
-            count = nonnegative(member.get("count"))
-            weekly = nonnegative(member.get("weekly_capacity_weeks"), 1.0)
-            if member.get("weekly_capacity_hours") is not None:
-                weekly = nonnegative(member.get("weekly_capacity_hours")) / 40.0
-            capacity += count * weekly
-    capacity = max(capacity, 1.0)
+    if not isinstance(phases, list):
+        raise ValueError("development_phases must be a list")
+    if not isinstance(team, list):
+        raise ValueError("engineering_team must be a list")
 
-    rows: list[dict[str, Any]] = []
-    cursor = 0.0
-    total_effort = 0.0
-    if isinstance(phases, list):
-        for index, phase in enumerate(phases[:30], start=1):
-            if not isinstance(phase, dict):
-                continue
-            effort = nonnegative(phase.get("weeks"))
-            deps = phase.get("dependencies", [])
-            deps = deps if isinstance(deps, list) else []
-            dep_names = {str(dep) for dep in deps}
-            dep_end = max((row["end_week"] for row in rows if row["name"] in dep_names), default=0.0)
-            start = max(cursor, dep_end)
-            end = start + (effort / capacity) * (1.0 + buffer)
-            rows.append({"index": index, "name": str(phase.get("name") or f"Phase {index}"), "effort_weeks": _round(effort, 3), "start_week": _round(start, 3), "end_week": _round(end, 3), "dependencies": [str(dep) for dep in deps]})
-            cursor = end
-            total_effort += effort
+    capacity = 0.0
+    for member in team:
+        if not isinstance(member, dict):
+            raise ValueError("each engineering team entry must be an object")
+        count = nonnegative(member.get("count"))
+        weekly = nonnegative(member.get("weekly_capacity_weeks"), 1.0)
+        if member.get("weekly_capacity_hours") is not None:
+            weekly = nonnegative(member.get("weekly_capacity_hours")) / 40.0
+        capacity += count * weekly
+    if capacity <= EPSILON:
+        raise ValueError("Engineering team capacity must be greater than zero")
+
+    normalized: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for index, phase in enumerate(phases[:30], start=1):
+        if not isinstance(phase, dict):
+            raise ValueError(f"development phase {index} must be an object")
+        name = str(phase.get("name") or f"Phase {index}").strip()
+        if not name:
+            name = f"Phase {index}"
+        if name in normalized:
+            raise ValueError(f"Duplicate development phase name: '{name}'")
+        effort = nonnegative(phase.get("weeks"))
+        if effort <= EPSILON:
+            raise ValueError(f"Phase '{name}' must have positive effort weeks")
+        deps = phase.get("dependencies", [])
+        if not isinstance(deps, list):
+            raise ValueError(f"Phase '{name}' dependencies must be a list")
+        normalized[name] = {"index": index, "name": name, "effort": effort, "deps": [str(dep).strip() for dep in deps if str(dep).strip()]}
+        order.append(name)
+
+    names = set(normalized)
+    for name, phase in normalized.items():
+        unknown = sorted(set(phase["deps"]) - names)
+        if unknown:
+            raise ValueError(f"Phase '{name}' references unknown dependencies: {unknown}")
+        if name in phase["deps"]:
+            raise ValueError(f"Phase '{name}' cannot depend on itself")
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in visiting:
+            raise ValueError(f"Development phase dependency cycle detected at '{name}'")
+        if name in visited:
+            return
+        visiting.add(name)
+        for dep in normalized[name]["deps"]:
+            visit(dep)
+        visiting.remove(name)
+        visited.add(name)
+
+    for name in order:
+        visit(name)
+
+    # Event-based list scheduling. A phase consumes a share of the common team
+    # capacity while it is active, so independent phases may overlap without
+    # silently claiming more capacity than exists.
+    remaining = {name: float(data["effort"]) * (1.0 + buffer) for name, data in normalized.items()}
+    completed: dict[str, float] = {}
+    active: set[str] = set()
+    starts: dict[str, float] = {}
+    ends: dict[str, float] = {}
+    current = 0.0
+
+    def ready(name: str) -> bool:
+        return name not in completed and name not in active and all(dep in completed for dep in normalized[name]["deps"])
+
+    while len(completed) < len(normalized):
+        for name in order:
+            if ready(name):
+                starts[name] = current
+                active.add(name)
+        if not active:
+            raise RuntimeError("Unable to schedule development phases")
+        share = capacity / len(active)
+        delta = min(remaining[name] / share for name in active)
+        current += delta
+        finished = [name for name in active if remaining[name] <= share * delta + EPSILON]
+        for name in finished:
+            remaining[name] = 0.0
+            ends[name] = current
+            active.remove(name)
+            completed[name] = current
+        for name in active:
+            remaining[name] = max(0.0, remaining[name] - share * delta)
+
+    rows = [
+        {
+            "index": normalized[name]["index"],
+            "name": name,
+            "effort_weeks": _round(normalized[name]["effort"], 3),
+            "start_week": _round(starts[name], 3),
+            "end_week": _round(ends[name], 3),
+            "dependencies": normalized[name]["deps"],
+        }
+        for name in order
+    ]
+    rows.sort(key=lambda row: (row["start_week"], row["index"]))
     return {
-        "model": "deterministic_delivery_v1",
+        "model": "deterministic_delivery_v2",
         "weekly_team_capacity": _round(capacity, 3),
         "schedule_buffer": _round(buffer, 4),
         "phases": rows,
-        "total_effort_weeks": _round(total_effort, 3),
+        "total_effort_weeks": _round(sum(float(row["effort_weeks"]) for row in rows), 3),
         "delivery_duration_weeks": _round(max((row["end_week"] for row in rows), default=0.0), 3),
+        "dependency_validation": "passed",
+        "parallelized": any(len([x for x in rows if x["start_week"] == row["start_week"]]) > 1 for row in rows),
     }
 
 
@@ -315,16 +481,30 @@ def calculate_product_priorities(inputs: dict[str, Any]) -> dict[str, Any]:
     features = inputs.get("features", [])
     default_weight = nonnegative(inputs.get("strategic_weight"), 1.0)
     ranked: list[dict[str, Any]] = []
-    if isinstance(features, list):
-        for index, feature in enumerate(features[:100], start=1):
-            if not isinstance(feature, dict):
-                continue
-            impact = nonnegative(feature.get("impact"))
-            effort = max(nonnegative(feature.get("effort")), EPSILON)
-            strategic = nonnegative(feature.get("strategic_weight"), default_weight)
-            dependency = max(nonnegative(feature.get("dependency_factor"), 1.0), EPSILON)
-            ranked.append({"index": index, "name": str(feature.get("name") or f"Feature {index}"), "impact": _round(impact, 4), "effort": _round(effort, 4), "strategic_weight": _round(strategic, 4), "dependency_factor": _round(dependency, 4), "priority_score": _round(impact / effort * strategic * dependency, 6), "in_scope": bool(feature.get("in_scope", True))})
-    ranked.sort(key=lambda item: item["priority_score"], reverse=True)
+    if not isinstance(features, list):
+        raise ValueError("features must be a list")
+    for index, feature in enumerate(features[:100], start=1):
+        if not isinstance(feature, dict):
+            raise ValueError("each feature must be an object")
+        impact = nonnegative(feature.get("impact"))
+        effort = nonnegative(feature.get("effort"))
+        if effort <= EPSILON:
+            raise ValueError(f"Feature '{feature.get('name', index)}' must have positive effort")
+        strategic = nonnegative(feature.get("strategic_weight"), default_weight)
+        dependency = nonnegative(feature.get("dependency_factor"), 1.0)
+        if dependency <= EPSILON:
+            raise ValueError(f"Feature '{feature.get('name', index)}' must have a positive dependency_factor")
+        ranked.append({
+            "index": index,
+            "name": str(feature.get("name") or f"Feature {index}"),
+            "impact": _round(impact, 4),
+            "effort": _round(effort, 4),
+            "strategic_weight": _round(strategic, 4),
+            "dependency_factor": _round(dependency, 4),
+            "priority_score": _round(impact / effort * strategic * dependency, 6),
+            "in_scope": bool(feature.get("in_scope", True)),
+        })
+    ranked.sort(key=lambda item: (-item["priority_score"], item["name"].lower()))
     for rank, item in enumerate(ranked, start=1):
         item["rank"] = rank
-    return {"model": "deterministic_product_priority_v1", "features": ranked, "mvp_features": [item for item in ranked if item["in_scope"]]}
+    return {"model": "deterministic_product_priority_v2", "features": ranked, "mvp_features": [item for item in ranked if item["in_scope"]]}
