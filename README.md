@@ -2,7 +2,9 @@
 
 A dependency-aware multi-agent business-analysis system that simulates an executive board while separating **LLM judgment** from **deterministic business validation and evidence provenance**.
 
-## v3 Architecture
+## v1.0 Stabilization Baseline
+
+Version `1.0.0` freezes the current deliberative architecture as a measurable control system before the project adds autonomous execution.
 
 ```text
 Business Brief
@@ -14,9 +16,15 @@ Business Brief
   -> LLM contradiction adjudication
   -> CEO final synthesis
   -> evidence/provenance ledger
-  -> decision-grade report model
+  -> decision-grade report
   -> PDF / Notion
 ```
+
+Phase 0 adds a baseline observability envelope to `run_board_meeting(...)` without changing the decision path. The response now includes `baseline_metrics` covering pipeline latency, failure rate, calculation correctness, provenance completeness, contradiction detection, and explicit availability states for decision correctness and LLM cost.
+
+See [`docs/BASELINE.md`](docs/BASELINE.md) for the metric contract and limitations.
+
+## v3 Architecture
 
 The runtime still uses LangGraph as the outer execution envelope. The dynamic scheduler handles dependency-ready departmental work inside that envelope.
 
@@ -45,6 +53,7 @@ tools/
   notion.py                     # Notion integration
   pdf.py                        # ReportLab executive PDF renderer
 utils/
+  metrics.py                    # Phase 0 baseline observability
   runtime.py                    # truthful runtime status
 formal_agents.py                # current v3 agent implementation
 analysis_engine.py              # current deterministic formal engine
@@ -52,6 +61,11 @@ consistency_engine.py           # current deterministic consistency engine
 scheduler.py                    # current scheduler implementation
 prompts.py                      # current prompt library
 tests/
+  unit/                         # isolated component tests
+  integration/                  # cross-component contract tests
+  regression/                   # fixed-behavior protections
+  scenarios/                    # deterministic control cases
+  evals/                        # evaluation contracts
 ```
 
 The package boundaries are intentionally explicit before the next deeper architectural phase. Existing root implementations remain compatible while the application imports the new boundaries.
@@ -119,9 +133,25 @@ It is deliberately bounded to **12 pages**:
 
 The report layer selectively extracts high-value findings and normalized claims from the full state. Full department analysis remains available in the internal state and Notion output.
 
+## Baseline Metrics
+
+A board run now includes:
+
+```text
+decision_correctness
+calculation_correctness
+provenance_completeness
+contradiction_detection
+pipeline_latency_ms
+llm_cost
+failure_rate
+```
+
+Unknown dimensions are represented explicitly rather than fabricated. Decision correctness requires labeled outcomes, and LLM cost requires normalized provider telemetry; both remain unscored/unavailable in the current runtime.
+
 ## Outputs
 
-A run returns the final report, formal integrity information, contradiction candidates and adjudication, scheduler status/events, revision counts, provenance ledger/validation/coverage, PDF path and optional Notion URL.
+A run returns the final report, formal integrity information, contradiction candidates and adjudication, scheduler status/events, revision counts, provenance ledger/validation/coverage, baseline metrics, PDF path and optional Notion URL.
 
 ## Setup
 
@@ -146,10 +176,11 @@ API docs: `http://localhost:8000/docs`
 pytest tests/ -v
 ```
 
-The suite covers formal validation, contradiction detection, retry/sanitization behavior, dynamic readiness, provenance lineage/integrity, API startup/route registration, mocked full-pipeline execution and the fixed PDF page-count contract.
+The suite covers formal validation, contradiction detection, retry/sanitization behavior, dynamic readiness, provenance lineage/integrity, API startup/route registration, mocked full-pipeline execution, deterministic Phase 2 control cases, the workforce-ramp regression contract, baseline metric contracts and the fixed PDF page-count contract.
 
 For a real external integration run, use the credentialed staging workflow in `.github/workflows/staging.yml`.
 
 ## Documentation
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the package responsibilities, provenance chain and report design.
+See [`docs/BASELINE.md`](docs/BASELINE.md) for the Phase 0 reliability and evaluation contract.
