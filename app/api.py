@@ -7,11 +7,11 @@ import time
 from collections import defaultdict
 from typing import Any, Awaitable, Callable
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from langchain_core.runnables import RunnableLambda
 from langserve import add_routes
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app.pipeline import run_board_meeting
 from utils.config import load_environment
@@ -93,7 +93,10 @@ async def security_middleware(request: Request, call_next: Callable[[Request], A
 
 
 def _invoke_board(inputs: dict[str, Any]) -> dict[str, Any]:
-    request = BoardMeetingRequest.model_validate(inputs)
+    try:
+        request = BoardMeetingRequest.model_validate(inputs)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_url=False)) from exc
     return run_board_meeting(request.brief)
 
 
