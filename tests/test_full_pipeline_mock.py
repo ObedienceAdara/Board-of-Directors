@@ -39,6 +39,22 @@ def test_run_board_meeting_mocked_full_pipeline(monkeypatch, tmp_path):
         state["scheduler_events"] = []
         return state
 
+    def fake_domain(_state):
+        return {
+            "phase2_calculations": {
+                "model_version": "phase2-v2",
+                "finance": {
+                    "model": "deterministic_financial_v2", "12_month_revenue": 1200.0, "gross_margin": 1.0,
+                    "contribution_margin": 1200.0, "net_burn": -100.0, "runway_months": None, "break_even_month": 1,
+                },
+                "sales": {"model": "deterministic_sales_funnel_v2", "12_month_revenue": 1200.0, "required_annual_sales": None},
+                "operations": {"model": "deterministic_workforce_v2", "12_month_payroll": 0.0},
+                "technical": {"model": "deterministic_delivery_v2", "delivery_duration_weeks": 4.0},
+                "product": {"model": "deterministic_product_v2", "features": [{"priority_score": 5.0}]},
+            },
+            "phase2_input_quality": {},
+        }
+
     def fake_consistency(_state):
         return {"formal_snapshot": {"cross_domain_contradictions": []}, "deterministic_contradictions": [], "consistency_status": "PASS"}
 
@@ -58,6 +74,7 @@ def test_run_board_meeting_mocked_full_pipeline(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "run_panel", fake_panel)
     monkeypatch.setattr(pipeline, "ceo_assign_tasks", fake_assign)
     monkeypatch.setattr(pipeline, "run_formal_board", fake_formal)
+    monkeypatch.setattr(pipeline, "_run_domain_calculations", fake_domain)
     monkeypatch.setattr(pipeline, "_deterministic_consistency", fake_consistency)
     monkeypatch.setattr(pipeline, "ceo_adjudicate_contradictions", fake_adjudication)
     monkeypatch.setattr(pipeline, "ceo_assemble_report", fake_synthesis)
