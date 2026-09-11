@@ -22,7 +22,7 @@ from formal_agents import (
     other_departments_context as _other_departments_context,
     panel_reaction,
     run_department,
-    safe_invoke,
+    safe_invoke as _safe_invoke,
     sanitize_brief,
     sanitize_field,
 )
@@ -64,6 +64,16 @@ def coo_agent(state):
 
 def pm_agent(state):
     return run_department("pm", state)
+
+
+def safe_invoke(chain: Any, inputs: dict[str, Any], *, fallback: str | None = None, retries: int = 2, backoff: float = 1.5) -> str:
+    """Keep the strict scheduler behavior while supporting the legacy optional fallback API."""
+    try:
+        return _safe_invoke(chain, inputs, retries=retries, backoff=backoff)
+    except Exception:
+        if fallback is not None:
+            return fallback
+        raise
 
 
 def frame_untrusted(text: str) -> str:
