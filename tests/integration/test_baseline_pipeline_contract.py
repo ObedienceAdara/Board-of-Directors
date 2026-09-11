@@ -10,6 +10,12 @@ class _FakeGraph:
         state["consistency_status"] = "PASS"
         state["phase2_calculations"] = {}
         state["provenance_validation"] = {"valid": True}
+        state["scheduler_status"] = {
+            "researcher": "passed", "cfo": "passed", "cto": "passed", "cmo": "passed",
+            "head_of_sales": "passed", "coo": "passed", "pm": "passed",
+        }
+        state["scheduler_failed_agents"] = []
+        state["scheduler_blocked_agents"] = []
         return state
 
 
