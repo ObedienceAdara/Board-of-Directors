@@ -15,7 +15,6 @@ from formal_agents import (
     ceo_assign_tasks,
     ceo_evaluate_agent,
     clean_json,
-    do_search,
     frame_untrusted as _frame_untrusted,
     get_search_queries,
     make_llm,
@@ -28,6 +27,7 @@ from formal_agents import (
     sanitize_field,
     sanitize_search_content,
 )
+from tools import do_search
 
 CEO_MODEL = MODELS["ceo"]
 RESEARCHER_MODEL = MODELS["researcher"]
