@@ -72,7 +72,8 @@ def run_formal_board(state: BoardState) -> BoardState:
 
 def _run_stage(state: BoardState, stage: str, fn: Callable[[BoardState], Mapping[str, Any]]) -> BoardState:
     try:
-        state.update(dict(fn(state)))
+        update_payload = cast(BoardState, dict(fn(state)))
+        state.update(update_payload)
     except Exception as exc:
         state.setdefault("pipeline_errors", []).append({"stage": stage, "message": str(exc)})
     return state
