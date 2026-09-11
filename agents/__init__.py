@@ -27,7 +27,7 @@ from formal_agents import (
     sanitize_field,
     sanitize_search_content,
 )
-from tools import do_search
+from tools.search import search_with_provenance
 
 CEO_MODEL = MODELS["ceo"]
 RESEARCHER_MODEL = MODELS["researcher"]
@@ -65,6 +65,11 @@ def coo_agent(state):
 
 def pm_agent(state):
     return run_department("pm", state)
+
+
+def do_search(query: str) -> str:
+    """Compatibility wrapper for the legacy agent-level search helper."""
+    return str(search_with_provenance(query)["content"])
 
 
 def frame_untrusted(text: str) -> str:
