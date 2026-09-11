@@ -148,14 +148,18 @@ def calculate_financial_model(inputs: dict[str, Any]) -> dict[str, Any]:
 
 def calculate_financial_scenarios(base_inputs: dict[str, Any], scenarios: Any = None) -> dict[str, Any]:
     definitions = scenarios if isinstance(scenarios, dict) else {}
-    defaults = {"conservative": {"customer_growth_factor": 0.75, "price_factor": 0.95, "cogs_percent_revenue": None}, "base": {"customer_growth_factor": 1.0, "price_factor": 1.0, "cogs_percent_revenue": None}, "optimistic": {"customer_growth_factor": 1.25, "price_factor": 1.05, "cogs_percent_revenue": None}}
+    defaults: dict[str, tuple[float, float]] = {
+        "conservative": (0.75, 0.95),
+        "base": (1.0, 1.0),
+        "optimistic": (1.25, 1.05),
+    }
     base_new = _monthly(base_inputs.get("monthly_new_customers"))
     output: dict[str, Any] = {}
-    for name, default in defaults.items():
+    for name, (default_growth, default_price_factor) in defaults.items():
         definition = definitions.get(name, {}) if isinstance(definitions, dict) else {}
         if not isinstance(definition, dict): definition = {}
-        growth = nonnegative(definition.get("customer_growth_factor"), default["customer_growth_factor"])
-        price_factor = nonnegative(definition.get("price_factor"), default["price_factor"])
+        growth = nonnegative(definition.get("customer_growth_factor"), default_growth)
+        price_factor = nonnegative(definition.get("price_factor"), default_price_factor)
         scenario = dict(base_inputs)
         scenario["monthly_new_customers"] = [value * growth for value in base_new]
         scenario["price"] = nonnegative(base_inputs.get("price")) * price_factor
