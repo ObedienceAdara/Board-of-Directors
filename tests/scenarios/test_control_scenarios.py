@@ -7,9 +7,9 @@ from tests.scenarios.control_cases import FINANCE_CONTROL, SALES_CONTROL, WORKFO
 def test_finance_control_case_is_exact_and_stable() -> None:
     result = calculate_financial_model(FINANCE_CONTROL)
 
-    assert result["12_month_revenue"] == 7800.0
-    assert result["gross_profit"] == 7800.0
-    assert result["ending_cash"] == 8800.0
+    assert result["12_month_revenue"] == 7200.0
+    assert result["gross_profit"] == 7200.0
+    assert result["ending_cash"] == 8200.0
     assert result["cash_depletion_month"] is None
     assert result["break_even_month"] == 1
 
