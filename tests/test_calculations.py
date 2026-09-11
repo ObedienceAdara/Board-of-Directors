@@ -46,7 +46,8 @@ def test_sales_funnel_connects_traffic_to_customers_and_revenue() -> None:
     assert result["months"][0]["qualified_leads"] == 50.0
     assert result["months"][0]["opportunities"] == 25.0
     assert result["months"][0]["new_customers"] == 5.0
-    assert result["required_annual_sales"] == 120.0
+    assert result["required_annual_sales"] is None
+    assert result["required_average_active_customers"] == 10.0
 
 
 def test_workforce_model_applies_start_dates_and_ramp() -> None:
@@ -69,7 +70,7 @@ def test_delivery_model_parallelizes_independent_phases() -> None:
 
 
 def test_delivery_model_rejects_unknown_dependency_and_cycle() -> None:
-    with pytest.raises(ValueError, match="unknown dependency"):
+    with pytest.raises(ValueError, match="unknown dependenc"):
         calculate_delivery_model({"engineering_team": [{"count": 1, "weekly_capacity_weeks": 1}], "development_phases": [{"name": "A", "weeks": 1, "dependencies": ["Missing"]}]})
     with pytest.raises(ValueError, match="cycle"):
         calculate_delivery_model({"engineering_team": [{"count": 1, "weekly_capacity_weeks": 1}], "development_phases": [{"name": "A", "weeks": 1, "dependencies": ["B"]}, {"name": "B", "weeks": 1, "dependencies": ["A"]}]})
