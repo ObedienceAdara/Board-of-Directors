@@ -352,7 +352,7 @@ def validate_sales(analysis: dict[str, Any]) -> dict[str, Any]:
     if not currency:
         errors.append("currency must be provided")
     price = _required_number(analysis, "primary_price", errors, minimum=EPSILON)
-    starting_customers = _required_number(analysis, "starting_customers", errors)
+    _required_number(analysis, "starting_customers", errors)
     annual_target = _required_number(analysis, "annual_revenue_target", errors)
     traffic = analysis.get("monthly_traffic")
     if not isinstance(traffic, list) or not traffic:
