@@ -26,7 +26,7 @@ from formal_agents import (
     sanitize_brief,
     sanitize_field,
 )
-from tools.search import do_search, sanitize_search_content, search_with_provenance
+from tools.search import do_search, sanitize_search_content
 
 CEO_MODEL = MODELS["ceo"]
 RESEARCHER_MODEL = MODELS["researcher"]
