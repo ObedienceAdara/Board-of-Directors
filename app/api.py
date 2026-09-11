@@ -96,7 +96,8 @@ def _invoke_board(inputs: dict[str, Any]) -> dict[str, Any]:
     try:
         request = BoardMeetingRequest.model_validate(inputs)
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=exc.errors(include_url=False)) from exc
+        details = exc.errors(include_url=False, include_context=False, include_input=False)
+        raise HTTPException(status_code=422, detail=details) from exc
     return run_board_meeting(request.brief)
 
 
