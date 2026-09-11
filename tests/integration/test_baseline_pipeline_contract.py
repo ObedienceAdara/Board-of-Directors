@@ -7,9 +7,12 @@ class _FakeGraph:
     def invoke(self, state: dict[str, object]) -> dict[str, object]:
         state["final_board_report"] = "Deterministic control recommendation"
         state["pipeline_errors"] = []
+        state["output_errors"] = []
         state["consistency_status"] = "PASS"
         state["phase2_calculations"] = {}
         state["provenance_validation"] = {"valid": True}
+        state["notion_board_url"] = "https://notion.so/baseline"
+        state["pdf_path"] = "baseline.pdf"
         state["scheduler_status"] = {
             "researcher": "passed", "cfo": "passed", "cto": "passed", "cmo": "passed",
             "head_of_sales": "passed", "coo": "passed", "pm": "passed",
