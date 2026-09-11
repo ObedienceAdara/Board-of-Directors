@@ -118,6 +118,8 @@ class BoardState(TypedDict, total=False):
 
     scheduler_status: dict[str, str]
     scheduler_events: list[dict[str, Any]]
+    scheduler_failed_agents: list[str]
+    scheduler_blocked_agents: list[str]
     revision_summary: dict[str, int]
     formal_snapshot: dict[str, Any]
     deterministic_contradictions: list[dict[str, Any]]
@@ -132,6 +134,7 @@ class BoardState(TypedDict, total=False):
     provenance_summary: dict[str, Any]
     final_board_report: str
     notion_board_url: str
+    notion_board_id: str
     pdf_path: str
     pipeline_errors: list[dict[str, str]]
     output_errors: list[dict[str, str]]
